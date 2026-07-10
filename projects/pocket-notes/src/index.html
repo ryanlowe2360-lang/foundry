@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pocket Notes</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --ink: #1f2430; --muted: #8a8f9c;
+    --accent: #4f6df5; --line: #e6e4de; --danger: #d4553f;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--ink); background: var(--bg); height: 100vh; display: flex;
+  }
+  aside {
+    width: 280px; min-width: 280px; background: var(--panel);
+    border-right: 1px solid var(--line); display: flex; flex-direction: column;
+  }
+  .side-head {
+    padding: 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .side-head h1 { font-size: 16px; letter-spacing: .2px; }
+  #new-note {
+    border: 0; background: var(--accent); color: #fff; border-radius: 8px;
+    padding: 6px 12px; font-size: 14px; cursor: pointer;
+  }
+  #new-note:hover { filter: brightness(1.08); }
+  #note-list { overflow-y: auto; flex: 1; }
+  .note-item {
+    padding: 12px 16px; border-bottom: 1px solid var(--line); cursor: pointer;
+  }
+  .note-item:hover { background: #fafaf7; }
+  .note-item.active { background: #eef1fe; border-left: 3px solid var(--accent); padding-left: 13px; }
+  .note-item .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .note-item .p { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .note-item .d { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  main { flex: 1; display: flex; flex-direction: column; background: var(--panel); }
+  .editor-head {
+    display: flex; gap: 8px; align-items: center;
+    padding: 12px 20px; border-bottom: 1px solid var(--line);
+  }
+  #title {
+    flex: 1; border: 0; outline: none; font-size: 20px; font-weight: 650;
+    color: var(--ink); background: transparent;
+  }
+  #delete-note {
+    border: 1px solid var(--line); background: transparent; color: var(--danger);
+    border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  #delete-note:hover { background: #fdf1ee; }
+  #body {
+    flex: 1; border: 0; outline: none; resize: none; padding: 20px;
+    font: 15px/1.6 inherit; color: var(--ink); background: transparent;
+  }
+  .empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); flex-direction: column; gap: 8px;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <aside>
+    <div class="side-head">
+      <h1>Pocket Notes</h1>
+      <button id="new-note" title="Create a note">＋ New</button>
+    </div>
+    <!-- M3 will add: <input id="search"> and tag chips here -->
+    <div id="note-list"></div>
+  </aside>
+  <main>
+    <div id="editor" class="hidden" style="display:flex;flex-direction:column;flex:1;">
+      <div class="editor-head">
+        <input id="title" placeholder="Untitled" autocomplete="off">
+        <button id="delete-note">Delete</button>
+      </div>
+      <textarea id="body" placeholder="Write it down before it wanders off…"></textarea>
+    </div>
+    <div id="empty" class="empty">
+      <div style="font-size:40px">🗒️</div>
+      <div>No note selected — create one with <b>＋ New</b></div>
+    </div>
+  </main>
+
+<script>
+(() => {
+  const STORE_KEY = "pocket-notes.v1";
+  const $ = (id) => document.getElementById(id);
+
+  let notes = load();          // [{id, title, body, updated}]
+  let activeId = notes.length ? notes[0].id : null;
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; }
+    catch { return []; }
+  }
+  function save() {
+    localStorage.setItem(STORE_KEY, JSON.stringify(notes));
+  }
+  function fmtDate(ts) {
+    return new Date(ts).toLocaleString(undefined,
+      { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+  function active() {
+    return notes.find(n => n.id === activeId) || null;
+  }
+
+  function renderList() {
+    const list = $("note-list");
+    list.innerHTML = "";
+    [...notes]
+      .sort((a, b) => b.updated - a.updated)
+      .forEach(n => {
+        const el = document.createElement("div");
+        el.className = "note-item" + (n.id === activeId ? " active" : "");
+        el.dataset.id = n.id;
+        el.innerHTML =
+          `<div class="t"></div><div class="p"></div><div class="d"></div>`;
+        el.querySelector(".t").textContent = n.title || "Untitled";
+        el.querySelector(".p").textContent = n.body.split("\n")[0] || "No content";
+        el.querySelector(".d").textContent = fmtDate(n.updated);
+        el.addEventListener("click", () => { activeId = n.id; render(); });
+        list.appendChild(el);
+      });
+  }
+
+  function renderEditor() {
+    const n = active();
+    $("editor").classList.toggle("hidden", !n);
+    $("empty").classList.toggle("hidden", !!n);
+    if (n) {
+      if ($("title").value !== n.title) $("title").value = n.title;
+      if ($("body").value !== n.body) $("body").value = n.body;
+    }
+  }
+
+  function render() { renderList(); renderEditor(); }
+
+  $("new-note").addEventListener("click", () => {
+    const n = { id: crypto.randomUUID(), title: "", body: "", updated: Date.now() };
+    notes.push(n);
+    activeId = n.id;
+    save(); render();
+    $("title").focus();
+  });
+
+  $("delete-note").addEventListener("click", () => {
+    if (!active()) return;
+    notes = notes.filter(n => n.id !== activeId);
+    activeId = notes.length ? notes[0].id : null;
+    save(); render();
+  });
+
+  for (const field of ["title", "body"]) {
+    $(field).addEventListener("input", () => {
+      const n = active();
+      if (!n) return;
+      n[field] = $(field).value;
+      n.updated = Date.now();
+      save(); renderList();
+    });
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>

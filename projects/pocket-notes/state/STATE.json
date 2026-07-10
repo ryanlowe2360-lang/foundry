@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "project": "pocket-notes",
+  "title": "Pocket Notes",
+  "status": "building",
+  "example": true,
+  "created": "2026-06-28",
+  "last_touched": "2026-07-01T15:40:00Z",
+  "repo": null,
+  "deploy_url": null,
+  "milestones": [
+    {
+      "id": 1,
+      "name": "App skeleton & layout",
+      "status": "done",
+      "acceptance": "index.html opens in a browser showing sidebar note list + editor pane; no console errors"
+    },
+    {
+      "id": 2,
+      "name": "Note CRUD with localStorage persistence",
+      "status": "done",
+      "acceptance": "Create, edit, delete notes; reload the page and notes survive"
+    },
+    {
+      "id": 3,
+      "name": "Search & tag filtering",
+      "status": "todo",
+      "acceptance": "Typing in the search box live-filters notes by title/body substring; clicking a tag shows only notes carrying it"
+    },
+    {
+      "id": 4,
+      "name": "Export / import JSON backup",
+      "status": "todo",
+      "acceptance": "Export downloads a .json of all notes; importing it in a fresh browser restores them exactly"
+    }
+  ],
+  "current_milestone": 3,
+  "next_action": "Start M3: add an <input id=\"search\"> above the note list in src/index.html and filter renderList() by title/body substring; verify by typing a term and screenshotting the filtered list.",
+  "blockers": [],
+  "open_questions": [],
+  "sessions": 2,
+  "tags": ["example", "web", "single-file"]
+}

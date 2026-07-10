@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "project": "{{SLUG}}",
+  "title": "{{TITLE}}",
+  "status": "interviewing",
+  "example": false,
+  "created": "{{DATE}}",
+  "last_touched": "{{TIMESTAMP}}",
+  "repo": null,
+  "deploy_url": null,
+  "milestones": [],
+  "current_milestone": null,
+  "next_action": "Complete the intake interview and lock the spec.",
+  "blockers": [],
+  "open_questions": [],
+  "sessions": 0,
+  "tags": []
+}

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+node_modules/
+dist/
+build/
+.DS_Store
+.env
+.env.*
+*.log
+.playwright/
