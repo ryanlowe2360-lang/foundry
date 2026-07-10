@@ -54,11 +54,17 @@ adds the six skills to every Cowork session, so "resume" or "intake this" just w
 without pasting anything. (Without the plugin, `KICKOFF.md` does the same job by
 hand; in Claude Code the skills also live natively in `.claude/skills/`.)
 
-**4. Re-point the weekly automation.** A weekly scheduled task (Mondays ~9am ET) runs
-upkeep and nudges you about stale projects. Until it can reach your repo it only
-sends setup reminders — once the repo is pushed, tell any Claude session:
-*"rewire my Foundry weekly task with repo URL `<your URL>`"* and it will recreate the
-schedule with the address baked in.
+**4. Re-point the weekly automation.** A weekly scheduled task (Mondays ~9am ET) is
+**already live** — it runs upkeep and nudges you about stale projects, with push +
+email summaries. Until it can reach your repo it only sends setup reminders — once
+the repo is pushed, tell any Claude session: *"rewire my Foundry weekly task with
+repo URL `<your URL>`"* and it will recreate the schedule with the address baked in.
+
+> For Claude, when rewiring: the existing task is named "Foundry weekly upkeep &
+> nudge" (id `trig_01AekEBh6Z5rSGp8sBHoYh4T`). Trigger prompts can't be edited in
+> place — create the replacement first with the same prompt structure plus the pinned
+> URL (keep push+email notifications and the Monday cadence), then delete this one
+> (`list_triggers` finds it by name if the id has rotated).
 
 ## Daily use
 
