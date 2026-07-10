@@ -54,17 +54,27 @@ adds the six skills to every Cowork session, so "resume" or "intake this" just w
 without pasting anything. (Without the plugin, `KICKOFF.md` does the same job by
 hand; in Claude Code the skills also live natively in `.claude/skills/`.)
 
-**4. Re-point the weekly automation.** A weekly scheduled task (Mondays ~9am ET) is
-**already live** — it runs upkeep and nudges you about stale projects, with push +
-email summaries. Until it can reach your repo it only sends setup reminders — once
-the repo is pushed, tell any Claude session: *"rewire my Foundry weekly task with
-repo URL `<your URL>`"* and it will recreate the schedule with the address baked in.
+**4. Re-point the automation.** Two scheduled tasks exist, with push + email
+summaries:
 
-> For Claude, when rewiring: the existing task is named "Foundry weekly upkeep &
-> nudge" (id `trig_01AekEBh6Z5rSGp8sBHoYh4T`). Trigger prompts can't be edited in
-> place — create the replacement first with the same prompt structure plus the pinned
-> URL (keep push+email notifications and the Monday cadence), then delete this one
-> (`list_triggers` finds it by name if the id has rotated).
+- **Weekly upkeep & nudge** (Mondays ~9am ET) — live now. Safe maintenance on
+  shipped projects, staleness nudges with exact next actions. Until it can reach
+  your repo it only sends setup reminders.
+- **Daily auto-build** (~6am ET) — created **disabled** so it can't nag you before
+  setup. Once enabled, each morning it picks your stalest unblocked in-flight
+  project and builds **one verified milestone** unattended: tests run, UIs
+  screenshotted, work committed. When it genuinely needs you (a key, a taste call),
+  it queues a question on the ledger instead of guessing, and anything finishing its
+  last milestone lands in `review` for your approval — the robot never ships without
+  you.
+
+Once the repo is pushed, tell any Claude session: *"rewire my Foundry automation
+with repo URL `<your URL>`"* — it recreates both schedules from
+`automation/TRIGGERS.md` with the address baked in and enables auto-build.
+
+> For Claude, when rewiring: follow the protocol at the top of
+> `automation/TRIGGERS.md`. The live tasks are named "Foundry weekly upkeep & nudge"
+> and "Foundry daily auto-build" (`list_triggers` finds them by name).
 
 ## Daily use
 

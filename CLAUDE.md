@@ -163,6 +163,26 @@ shape — it becomes his notification:
 > ⚠️ Stale: recipe-app idle 12d — next: wire the auth callback in src/auth.ts.
 > ▶️ To resume, open a Foundry session and say: "resume recipe-app".
 
+## Unattended build mode (the auto-build schedule)
+
+A scheduled session may build with no Ryan present. Everything above still applies,
+plus these rules:
+
+1. **Target selection:** in-flight projects (`spec-locked`/`building`) with **no
+   blockers and no open questions** — pick the stalest. If none qualify, end with a
+   summary of what's waiting on Ryan and touch no code.
+2. **One milestone per run** (or finish the one in progress). Full verification
+   standard — evidence in the build log or it didn't happen.
+3. **Never guess on Ryan-decisions.** The moment his input is genuinely needed — an
+   API key, a taste call, anything on the ask-first list — record it with
+   `touch --add-question "..."`, leave the milestone cleanly resumable, and move to
+   the next qualifying project (at most one attempt per project per run).
+4. **Review-gate on shipping:** a run that completes a project's final milestone sets
+   status `review`, never `shipped`. Ryan approves ships.
+5. Full end-of-session ritual, and the run's final message uses the ✅/⚠️/▶️ summary
+   shape — that's the notification telling Ryan what got built overnight and what's
+   waiting on him.
+
 ## Staleness thresholds
 
 Idle ≥ 7 days while in flight → ⚠️ flagged in the ledger. Idle ≥ 21 days → 🔥, and the
