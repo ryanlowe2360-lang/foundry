@@ -2,6 +2,21 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-09-26 — session 3 (keys check, telegram-send v2)
+
+- **Did:** Ryan reported "all keys added" — they went into the `.env` on his Mac (nine values, checked by
+  length only), not into Supabase Edge Function secrets, so `telegram-send` still answered
+  `TELEGRAM_BOT_TOKEN not set` on the 22:30 UTC poll. Deployed `telegram-send` v2: an optional
+  `TELEGRAM_CHAT_ID` secret seeds the chat id without waiting for `/start`. SETUP.md §1 now explains the
+  `.env` vs Supabase-secrets split and lists the optional third secret; copy refreshed on the Mac.
+  Merged with session 2's universe load (rebased; STATE re-touched with the blocker, which session 2 had cleared).
+- **Verified:** `net._http_response` ids 134–139 (every 2-min poll) → `TELEGRAM_BOT_TOKEN not set`;
+  `saa.settings.telegram_chat_id` empty; `saa.outbox` row 1 still `pending`, attempts 0 (nothing lost).
+  `.env` on the Mac: TT_PROD_* and TT_SANDBOX_* (client id/secret/refresh token), TELEGRAM_BOT_TOKEN,
+  TELEGRAM_CHAT_ID, FINNHUB_API_KEY all non-empty → M2's credential blocker is gone.
+- **Stopped at:** M1 built; the two live paths (Telegram delivery, Finnhub/Cboe fetch) flip on as soon as
+  the two secrets are pasted into Supabase. Monday 2026-09-28 is the first real cycle.
+
 ## 2026-09-26 — session 2 (dry-run brief + symbol universe)
 
 - **Did:**

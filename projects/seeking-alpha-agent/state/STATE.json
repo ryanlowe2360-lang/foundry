@@ -5,7 +5,7 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-09-26T19:31:54Z",
+  "last_touched": "2026-09-26T22:32:56Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
@@ -47,7 +47,7 @@
     }
   ],
   "current_milestone": 1,
-  "next_action": "After Ryan's setup (src/docs/SETUP.md: secrets TELEGRAM_BOT_TOKEN + FINNHUB_API_KEY, /start the bot, TradingView alerts on SPY/QQQ/IWM + tier A from notes/universe-2026-09-26.md): verify M1 acceptance #2/#3 with real data \u2014 SQL: select id, status, sent_at, error from saa.outbox order by id (expect sent); select * from saa.calendar_days where trade_date = current_date (after a 7:15 ET run); select count(*) from saa.price_ticks where ts::date = current_date (after a session); check Monday 2026-09-28's brief in saa.briefs / saa.run_log; then python3 scripts/foundry.py touch seeking-alpha-agent --milestone 1 --milestone-status done, and watch saa.v_daily_records for the 10-consecutive-complete-day M1\u2192M2 gate.",
+  "next_action": "After the Supabase secrets exist: confirm saa.outbox row 1 is sent and saa.settings.telegram_chat_id is set; force a calendar fetch with select saa.call_function('market-data', '{\"mode\":\"calendar\",\"force\":true}'::jsonb) and check saa.calendar_days + net._http_response; then watch Monday 2026-09-28 (brief 7:40, ticks, tally 4:20) and mark milestone 1 done with python3 scripts/foundry.py touch seeking-alpha-agent --milestone 1 --milestone-status done. Alert set: SPY/QQQ/IWM + tier A from notes/universe-2026-09-26.md.",
   "blockers": [],
   "open_questions": [],
   "sessions": 2,
