@@ -3,6 +3,15 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D8 (2026-09-26) — Goal 2 (Trading) ruling revised to REVISE, keep (supersedes D3)
+
+- **Context:** After the intake (D3 = KILL), Ryan ruled REVISE in a later setup session the same day, per
+  the Project build log: zero-line weekly indicator (realized vs required growth per trade), ≤5 hrs/week
+  cap unchanged, M1 counts as the journal from day one.
+- **Chose:** REVISE stands; D3 is superseded. The 10-day complete-records streak is both the ledger's
+  journal streak and the M1 → M2 engineering gate.
+- **Revisit if:** Ryan reopens the ruling in a goals session.
+
 ## D7 (2026-09-26) — The Foundry auto-build stays off this project via a recorded blocker
 
 - **Context:** Ryan's "Foundry daily auto-build" scheduled task picks the stalest in-flight project with no
