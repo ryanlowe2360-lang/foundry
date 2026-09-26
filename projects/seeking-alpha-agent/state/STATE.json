@@ -1,0 +1,62 @@
+{
+  "schema": 1,
+  "project": "seeking-alpha-agent",
+  "title": "Seeking Alpha Agent \u2014 Autonomous Intraday Options Agent",
+  "status": "spec-locked",
+  "example": false,
+  "created": "2026-09-26",
+  "last_touched": "2026-09-26T17:47:02Z",
+  "repo": null,
+  "deploy_url": null,
+  "milestones": [
+    {
+      "id": 1,
+      "name": "Proving Ground: journal-only pipeline (plan M1)",
+      "status": "todo",
+      "acceptance": "tv-webhook POST -> saa.triggers + open saa.shadow_trades (wrong secret -> 401); saa.outbox insert -> sent_at (or recorded error); market-data calendar/quotes rows; shadow-scorer closes a trade with r_result/mfe/mae + unit test; manual fire of the 7:40 brief task writes saa.briefs + saa.checklists + outbox; validate green, pushed. Gate to M2: 10 consecutive trading days of complete records."
+    },
+    {
+      "id": 2,
+      "name": "Daemon core: data plane (plan M2 part 1)",
+      "status": "todo",
+      "acceptance": "Full sandbox session run logs heartbeat, >=380 1-min bars per index symbol, chain snapshots every 5 min, zero unhandled exceptions; pytest green; saa.run_log shows the run."
+    },
+    {
+      "id": 3,
+      "name": "Rules engine + Kelly sizing + shadow ledger with real marks (plan M2 part 2)",
+      "status": "todo",
+      "acceptance": "Property tests for every Tier 1 rail; replay of >=5 recorded sessions is deterministic; Kelly tests reproduce plan 0.3 table (6%/16%/24%)."
+    },
+    {
+      "id": 4,
+      "name": "Paper execution, approval mode, dashboard (plan M2 part 3)",
+      "status": "todo",
+      "acceptance": ">=3 sandbox round trips reconciled; /halt flattens within 10 s; approval timeout logged as Skip; Playwright screenshot of dashboard with live sandbox data. Gate to M5: >=30 paper trades, expectancy > 0, avg loss ~ -1R, >=90% checklist compliance, zero Tier 1 breaches."
+    },
+    {
+      "id": 5,
+      "name": "Live, approval mode on the VPS (plan M3)",
+      "status": "todo",
+      "acceptance": "First live trade only after Approve; 5 sessions reconciled to the cent; missing-heartbeat alert verified. Gate to M6: 20 live trades, no incidents, expectancy > 0."
+    },
+    {
+      "id": 6,
+      "name": "Full auto (plan M4)",
+      "status": "todo",
+      "acceptance": "Unattended live session with trades reported; forced Tier 1 breach refused and logged in sandbox; status review until Ryan ships."
+    }
+  ],
+  "current_milestone": 1,
+  "next_action": "Start milestone 1: Proving Ground \u2014 apply migration src/supabase/migrations/0001_saa_schema.sql to project zspbkcheounkwnpjkgrv (schema saa), then deploy src/supabase/functions/{tv-webhook,telegram-send,market-data,shadow-scorer}; verify with a net.http_post test insert into saa.triggers.",
+  "blockers": [],
+  "open_questions": [],
+  "sessions": 0,
+  "tags": [
+    "trading",
+    "options",
+    "supabase",
+    "telegram",
+    "tastytrade",
+    "python"
+  ]
+}
