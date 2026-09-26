@@ -2,6 +2,31 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-09-26 — session 2 (dry-run brief + symbol universe)
+
+- **Did:**
+  - Scheduled brief task fired by hand with the DRY RUN payload (Saturday): first turn correctly skipped
+    ("non-trading day", run_log 6); the fire payload arrived as a second turn and ran the Monday 2026-09-28
+    brief — calendar row missing as expected, 5 web searches + 9 fetches, STAND DOWN (VIX 14.87, VIX1D/9D/3M
+    unreachable → regime unreadable; BFRI PDUFA + GNS/NTWK BMO all Stage-2 liquidity fails), 4 stand-down
+    checklists, 15-symbol watch, 5-line outbox brief, run_log 11. The build session verified this as
+    acceptance #5 and removed the dry-run rows (briefs/checklists/outbox `brief`), keeping run_log — so the
+    empty `saa.briefs` afterwards is expected, not a persistence bug (took a few queries to establish that).
+  - Ryan's Seeking Alpha Quant export (211 names) tiered by options liquidity and loaded into `saa.symbols`:
+    133 active (A: 77 liquid, B: 56), 48 inactive (C: thin), 30 OTC ADRs / <$5 skipped. Rule, alert set and
+    per-name table in `notes/universe-2026-09-26.{md,csv}`; original export preserved in `notes/`.
+- **Verified (evidence):**
+  - `select kind, active, count(*) from saa.symbols group by 1,2` → index/true 3, single/false 48, single/true 133.
+  - `pg_get_functiondef('public.saa_active_symbols')` confirms the poller ignores `symbols.active`, so the
+    load adds no Finnhub calls. `saa.run_log` ids 6, 9, 10, 11 show both dry-run turns and the two
+    "secret not set" failures (`TELEGRAM_BOT_TOKEN`, `FINNHUB_API_KEY`).
+- **Observations:** `saa_watch_add` stamps `calendar_days.watch` on `saa.et(now())::date` — right for the
+  7:40 AM live run, wrong for any off-day dry run (the watch lands on the dry-run day, not the target date).
+  Harmless for M1; noted for the prompt if dry runs become routine. `settings.telegram_chat_id` is still
+  empty — the bot `/start` (SETUP.md §2) hasn't happened yet.
+- **Stopped at:** universe loaded; still waiting on Ryan's three setup steps. Ryan reports he is setting up
+  tastytrade (M2 sandbox creds) on his side.
+
 ## 2026-09-26 — session 1 (intake + M1 build)
 
 - **Did:**

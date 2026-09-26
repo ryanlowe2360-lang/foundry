@@ -1,0 +1,212 @@
+symbol,price,avg_vol,quant,w52lo,w52hi,beta,tier,why,strike_step,spread_frac
+NVDA,225.07,125875368,4.97,164.27,236.54,1.870283,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+INTC,123.0,109051620,4.99,32.89,142.35,2.011792,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+F,12.71,48814198,4.84,11.11,17.78,0.886792,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+AMZN,249.67,44698813,4.93,196,287.2,1.476415,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+MU,1082.28,36970848,4.99,159.9706,1255,2.509433,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+WBD,30.86,27258492,4.54,17.075,30.92,1.214622,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+HPE,62.94,20597305,4.98,19.84,65.65,1.566037,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+PBR,20.37,18045366,4.89,11.43,22.24,-0.182971,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+IOVA,11.0,16565923,4.98,1.76,11.13,1.400943,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+PYPL,55.04,14925225,4.65,38.46,79.215,1.117924,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+FCX,72.31,13905726,4.83,36.05,80.24,1.658018,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+UMC,24.31,13818839,4.96,6.97,28.96,0.860507,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+SNDK,1777.8,13624889,4.99,103.348,2354.3899,2.584415,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+FRSH,12.54,11870094,4.8,6.79,13.99,1.636792,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+AXTI,78.94,10022140,4.88,4,143.16,2.705188,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+U,41.55,9856146,4.88,16.78,52.15,2.294811,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+HST,22.42,9185902,4.71,15.61,25.71,0.625,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+CVX,204.45,8829479,4.85,146.49,217.78,0.094339,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+PTEN,10.91,8807267,4.84,5.1,13.39,0.683962,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+ASX,44.31,8502189,4.97,10.9303,45.515,1.144927,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+WDC,456.81,7703871,4.95,111.83,799.87,2.273584,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+CRDO,210.97,7383192,4.83,86.485,308.6699,3.587264,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+TXN,278.07,7310902,4.84,152.73,334.03,1.242924,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+GM,82.63,6761276,4.73,54.33,91.85,0.844339,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+TEM,85.01,6620743,4.7,40.77,104.32,2.88915,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+FSLY,24.96,6447249,4.96,7.735,34.82,0.65566,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+COHR,295.83,6147842,4.74,105.02,440,2.554245,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+DOC,20.31,5623369,4.53,15.7,22.949,0.485849,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+OSCR,29.6,5539302,4.93,10.69,34.48,0.785377,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+VIAV,40.68,5412727,4.7,12.23,60.43,1.009433,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+XYZ,76.42,4703381,4.66,48.21,86.92,1.511792,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+CNC,61.82,4644984,4.94,31.63,69.63,0.349056,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+STX,916.83,4624950,4.98,209,1145,2.235849,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+LFST,11.84,4623189,4.85,4.77,13.56,0.709905,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+TAL,12.0,4614734,4.69,8.875,13.37,0.521226,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+IVZ,30.92,4523752,4.74,20.67,33.66,1.332547,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+P,126.0,4336658,4.93,56.78,131.41,2.080188,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+PK,15.43,4284262,4.87,9.84,16.2,0.773584,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+WDAY,189.45,4253480,4.75,110.36,249.85,1.049528,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+FLEX,114.68,4105216,4.6,53.07,166.86,1.919811,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+ADM,81.12,3696782,4.75,55.58,88.75,0.153301,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+KNX,63.67,3635242,4.63,38.91,82.86,1.07783,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+RELY,21.36,3570290,4.73,12.08,27.479,1.377358,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+NWG,18.49,3533787,4.69,13.76,19.42,1.03069,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+DHT,21.78,3530788,4.85,10.83,23.56,0.488207,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+BTSG,56.59,3393125,4.77,27.1101,73.7499,1.167452,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+MTCH,40.55,3386379,4.57,28.81,44.935,0.662735,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+PBF,73.69,3385756,4.98,25.62,82.61,0.464622,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+MXL,93.84,3319378,4.99,12.77,128.3,2.540094,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+SMTC,182.3,3233638,4.95,60.28,190.64,2.26415,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+LTH,39.97,3124419,4.72,24.14,47.235,1.089622,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+VLO,387.18,3116925,4.97,155.29,419.0374,0.580188,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+AVAH,12.41,2977370,4.88,5.93,14.71,1.268867,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+PSX,255.75,2901108,4.95,126.74,277.12,0.57783,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+APLE,16.19,2796057,4.9,10.85,17.28,0.707547,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+AEHR,104.39,2780666,4.97,18.7,147.4,2.837264,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+DINO,106.82,2779288,4.95,45.7101,118.39,0.474056,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+PENG,56.22,2767052,4.9,16.04,89.86,2.469339,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+FRO,47.73,2755141,4.93,20.47,54.91,0.804245,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+TTMI,129.17,2748172,4.58,53.356,223.83,2.205188,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+DRH,12.49,2737353,4.93,7.475,13.79,0.658018,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+MPC,393.52,2584836,4.98,161.93,431.08,0.518867,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+USFD,93.33,2500570,4.56,69.875,111.42,0.594339,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+DAR,61.29,2477849,4.87,29.15,69.9758,0.417452,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+CLS,365.44,2457344,4.67,230.24,474.025,2.015384,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+CNK,37.77,2451120,4.74,21.6,38.98,0.417452,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+CIEN,356.91,2403078,4.68,143,637.51,1.641509,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",5,0.05
+CTRE,37.41,2352064,4.62,32.79,43.62,0.174528,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+TD,120.65,2305096,4.61,77.26,125.465,0.646153,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+ESTC,88.12,2288251,4.86,42.05,108,1.584905,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+BNS,93.48,2271519,4.72,62.98,95.74,0.692307,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+BILL,44.25,2263782,4.51,31.41,57.21,1.709905,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+HALO,113.9,2128510,4.9,61.225,116.845,0.278301,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+INDV,35.82,2103893,4.66,22.5609,42.81,0.676886,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+NESR,32.13,2079901,4.94,9.95,36.94,1.044811,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+GEO,31.22,2038571,4.82,12.51,33.15,1.490566,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+TALO,16.47,2037793,4.74,8.965,18.725,0.337264,A,"avg vol ≥2M, price ≥$10 — liquid chain likely",1,0.05
+HTFL,49.17,1983945,4.82,20.13,52.2212,1.886274,B,avg vol 0.7–2M — check spreads,1,0.08
+STT,181.34,1979897,4.76,104.635,195.93,1.068396,B,avg vol 0.7–2M — check spreads,1,0.08
+FA,19.6,1918299,4.53,8.82,25.15,1.367924,B,avg vol 0.7–2M — check spreads,1,0.08
+VEEV,280.68,1881389,4.87,148.05,310.5,0.995283,B,avg vol 0.7–2M — check spreads,5,0.08
+PBI,16.38,1877384,4.5,8.95,19.07,1.089622,B,avg vol 0.7–2M — check spreads,1,0.08
+TSEM,230.47,1876525,4.77,69.59,319.94,1.660377,B,avg vol 0.7–2M — check spreads,5,0.08
+VSXY,82.91,1841264,4.83,25.92,102.46,1.948113,B,avg vol 0.7–2M — check spreads,1,0.08
+DK,67.84,1825330,4.93,25.85,82.27,0.511792,B,avg vol 0.7–2M — check spreads,1,0.08
+LSCC,128.05,1792217,4.63,60.5,157.01,2.268867,B,avg vol 0.7–2M — check spreads,1,0.08
+SWK,91.4,1762315,4.59,61.9,104.68,1.330188,B,avg vol 0.7–2M — check spreads,1,0.08
+ATI,185.48,1711158,4.73,76.78,243.5694,1.830188,B,avg vol 0.7–2M — check spreads,1,0.08
+CXW,32.13,1605608,4.8,15.735,36.55,1.176886,B,avg vol 0.7–2M — check spreads,1,0.08
+BG,109.0,1599144,4.57,79.115,134.865,0.089622,B,avg vol 0.7–2M — check spreads,1,0.08
+NIQ,17.83,1537965,4.88,7.93,19.69,1.41132,B,avg vol 0.7–2M — check spreads,1,0.08
+SBLK,29.54,1534888,4.8,16.72,32.88,1.066037,B,avg vol 0.7–2M — check spreads,1,0.08
+PAGP,26.58,1531868,4.84,16.685,28.7,0.214622,B,avg vol 0.7–2M — check spreads,1,0.08
+MTSI,285.57,1524271,4.65,121.97,418.9,1.662735,B,avg vol 0.7–2M — check spreads,5,0.08
+HIW,30.09,1520174,4.59,20.45,35.435,0.70283,B,avg vol 0.7–2M — check spreads,1,0.08
+SDGR,28.85,1508130,4.89,10.945,31.5948,1.846698,B,avg vol 0.7–2M — check spreads,1,0.08
+FORM,129.69,1477309,4.87,35.38,160.27,2.082547,B,avg vol 0.7–2M — check spreads,1,0.08
+PFG,114.77,1424866,4.66,77.9,121.18,0.896226,B,avg vol 0.7–2M — check spreads,1,0.08
+NUE,247.25,1407732,4.84,131.32,280.11,1.275943,B,avg vol 0.7–2M — check spreads,5,0.08
+CM,113.6,1353194,4.59,78.785,124.86,0.653846,B,avg vol 0.7–2M — check spreads,1,0.08
+KEYS,362.15,1350240,4.79,158.79,374.9629,1.570754,B,avg vol 0.7–2M — check spreads,5,0.08
+RY,201.98,1334017,4.81,143.13,218.565,0.657692,B,avg vol 0.7–2M — check spreads,5,0.08
+VIRT,53.4,1253613,4.5,31.55,68.7599,0.641509,B,avg vol 0.7–2M — check spreads,1,0.08
+UCTT,77.69,1236283,4.62,21.485,144.22,2.174528,B,avg vol 0.7–2M — check spreads,1,0.08
+AVT,103.08,1216511,4.88,44.25,104.5799,1.127358,B,avg vol 0.7–2M — check spreads,1,0.08
+CDNA,63.68,1196125,4.99,13.95,65.19,0.915094,B,avg vol 0.7–2M — check spreads,1,0.08
+EAT,207.2,1195857,4.77,100.3,254.99,0.665094,B,avg vol 0.7–2M — check spreads,5,0.08
+LMT,519.56,1178587,4.62,437.25,692,0.304245,B,avg vol 0.7–2M — check spreads,5,0.08
+EMBJ,78.63,1172169,4.69,53.56,80.75,0.19384,B,avg vol 0.7–2M — check spreads,1,0.08
+FIVE,222.6,1142762,4.64,137.77,263.875,1.51415,B,avg vol 0.7–2M — check spreads,5,0.08
+ONTO,287.64,1136533,4.69,118.97,386.46,2.20283,B,avg vol 0.7–2M — check spreads,5,0.08
+HMC,32.93,1105148,4.81,23.245,33.445,0.74936,B,avg vol 0.7–2M — check spreads,1,0.08
+KNTK,51.21,1104644,4.5,31.33,56.92,0.705188,B,avg vol 0.7–2M — check spreads,1,0.08
+SNEX,66.81,1094549,4.71,36.448889,94.66,1.018867,B,avg vol 0.7–2M — check spreads,1,0.08
+OII,46.26,1068761,4.82,22.02,54.25,0.900943,B,avg vol 0.7–2M — check spreads,1,0.08
+PARR,77.46,998322,4.92,33.21,87.72,-0.004716,B,avg vol 0.7–2M — check spreads,1,0.08
+SIMO,276.23,966276,4.96,79.76,355,2.049528,B,avg vol 0.7–2M — check spreads,5,0.08
+ICHR,57.94,936097,4.9,14.06,113.58,2.370283,B,avg vol 0.7–2M — check spreads,1,0.08
+VICR,281.96,914453,4.91,48.31,382.65,2.35849,B,avg vol 0.7–2M — check spreads,5,0.08
+HRMY,41.26,903171,4.63,25.52,43.49,1.03066,B,avg vol 0.7–2M — check spreads,1,0.08
+WK,69.64,863562,4.63,43.34,97.095,0.693396,B,avg vol 0.7–2M — check spreads,1,0.08
+APPN,36.01,855840,4.85,18.63,46.059,1.127358,B,avg vol 0.7–2M — check spreads,1,0.08
+SIG,102.26,853221,4.54,71.615,110.2,1.009433,B,avg vol 0.7–2M — check spreads,1,0.08
+SNX,263.03,847088,4.81,142.22,298.7699,1.252358,B,avg vol 0.7–2M — check spreads,5,0.08
+PACS,41.3,846943,4.71,10.31,49.49,-0.242924,B,avg vol 0.7–2M — check spreads,1,0.08
+TFSL,16.72,846888,4.51,12.535,19.49,0.40566,B,avg vol 0.7–2M — check spreads,1,0.08
+GRAL,126.89,845035,4.86,41.5,127.67,2.589622,B,avg vol 0.7–2M — check spreads,1,0.08
+URGN,41.35,833939,4.86,15.86,50.81,1.176886,B,avg vol 0.7–2M — check spreads,1,0.08
+SANM,224.77,820763,4.71,111.52,288.68,1.417452,B,avg vol 0.7–2M — check spreads,5,0.08
+GKOS,154.43,817307,4.71,73.16,191.62,0.976415,B,avg vol 0.7–2M — check spreads,1,0.08
+BUSE,30.09,815434,4.53,22,31.7,0.823113,B,avg vol 0.7–2M — check spreads,1,0.08
+BMO,172.3,781664,4.62,119.84,187.22,0.884615,B,avg vol 0.7–2M — check spreads,1,0.08
+SNDR,31.25,768598,4.52,20.11,39.27,0.747641,B,avg vol 0.7–2M — check spreads,1,0.08
+BB,8.21,18358949,4.91,3.1201,13.59,1.126923,C,thin (avg vol <0.7M) — event-day only,1,0.08
+NWL,5.43,9744304,4.7,3.07,7.1299,1.551886,C,thin (avg vol <0.7M) — event-day only,1,0.08
+TGB,8.61,5694607,4.8,3.66,9.82,2.488461,C,thin (avg vol <0.7M) — event-day only,1,0.08
+UGP,7.1,3673804,4.94,3.6,7.78,-0.007246,C,thin (avg vol <0.7M) — event-day only,1,0.08
+NLST,5.56,2467828,4.99,0.4458,7,0.891509,C,thin (avg vol <0.7M) — event-day only,1,0.08
+STGW,8.32,1378519,4.79,4.285,9.55,1.127358,C,thin (avg vol <0.7M) — event-day only,1,0.08
+JXN,133.12,697806,4.79,89.67,140.9,1.32783,C,thin (avg vol <0.7M) — event-day only,1,0.08
+TPC,83.97,691809,4.58,57.9,102.3,1.346698,C,thin (avg vol <0.7M) — event-day only,1,0.08
+WEX,178.28,650710,4.73,125.29,203.99,1.049528,C,thin (avg vol <0.7M) — event-day only,1,0.08
+CHEF,110.27,643401,4.85,53.2,117.65,0.853773,C,thin (avg vol <0.7M) — event-day only,1,0.08
+CVLT,145.54,642236,4.64,71.75,196.88,1.403301,C,thin (avg vol <0.7M) — event-day only,1,0.08
+SEZL,111.38,641155,4.72,49.5,195.71,3.337264,C,thin (avg vol <0.7M) — event-day only,1,0.08
+INSW,105.64,627134,4.75,42.26,113.14,0.683962,C,thin (avg vol <0.7M) — event-day only,1,0.08
+VCTR,108.75,621612,4.83,57.03,123.55,1.212264,C,thin (avg vol <0.7M) — event-day only,1,0.08
+HNI,47.21,619873,4.56,28.93,52.79,0.875,C,thin (avg vol <0.7M) — event-day only,1,0.08
+DIOD,95.84,609121,4.6,42.28,125.99,1.978773,C,thin (avg vol <0.7M) — event-day only,1,0.08
+ECO,77.9,588789,4.94,27.74,87.31,0.641943,C,thin (avg vol <0.7M) — event-day only,1,0.08
+BFH,102.91,585989,4.68,53.83,114.53,1.422169,C,thin (avg vol <0.7M) — event-day only,1,0.08
+ARW,232.8,583990,4.86,101.79,237.3328,1.058962,C,thin (avg vol <0.7M) — event-day only,5,0.08
+CPAY,398.11,543122,4.73,252.84,427.46,1.382075,C,thin (avg vol <0.7M) — event-day only,5,0.08
+SITM,662.27,511892,4.92,243.6765,901.81,2.844339,C,thin (avg vol <0.7M) — event-day only,5,0.08
+BPOP,160.48,505942,4.54,108.74,179.235,0.896226,C,thin (avg vol <0.7M) — event-day only,1,0.08
+VAC,102.82,483871,4.73,44.58,131.34,1.841981,C,thin (avg vol <0.7M) — event-day only,1,0.08
+CLH,313.04,442590,4.57,201.34,335.94,0.632075,C,thin (avg vol <0.7M) — event-day only,5,0.08
+DAVE,324.88,437506,4.75,152.21,458.25,2.058962,C,thin (avg vol <0.7M) — event-day only,5,0.08
+IESC,324.13,431100,4.58,170.0658,408.255,1.625,C,thin (avg vol <0.7M) — event-day only,5,0.08
+DGII,78.3,405392,4.82,34.41,86.84,1.438679,C,thin (avg vol <0.7M) — event-day only,1,0.08
+ECPG,98.41,372640,4.8,39.945,104.98,0.839622,C,thin (avg vol <0.7M) — event-day only,1,0.08
+TNET,65.11,362626,4.69,33.605,73.075,0.851415,C,thin (avg vol <0.7M) — event-day only,1,0.08
+JLL,321.91,357637,4.81,259.83,393.84,1.115566,C,thin (avg vol <0.7M) — event-day only,5,0.08
+RGA,248.65,344267,4.75,178.2101,257.808438,0.676886,C,thin (avg vol <0.7M) — event-day only,5,0.08
+THG,217.44,316076,4.77,166.54,236.065,0.370283,C,thin (avg vol <0.7M) — event-day only,5,0.08
+CIB,95.15,305803,4.81,50.72,105.6,0.429347,C,thin (avg vol <0.7M) — event-day only,1,0.08
+PKX,56.95,299148,4.64,44.99,92.4,1.176258,C,thin (avg vol <0.7M) — event-day only,1,0.08
+HGTY,13.59,297210,4.67,9.36,14.17,0.705188,C,thin (avg vol <0.7M) — event-day only,1,0.08
+LAD,316.42,296844,4.5,239.78,439.49,1.002358,C,thin (avg vol <0.7M) — event-day only,5,0.08
+OFG,51.94,296782,4.51,35.71,54.47,0.712264,C,thin (avg vol <0.7M) — event-day only,1,0.08
+HURN,157.98,292758,4.63,84.875,186.775,0.589622,C,thin (avg vol <0.7M) — event-day only,1,0.08
+GEF,82.66,292490,4.62,55.75,90.565,0.773584,C,thin (avg vol <0.7M) — event-day only,1,0.08
+DCO,172.15,276931,4.76,84.76,210.39,0.853773,C,thin (avg vol <0.7M) — event-day only,1,0.08
+TEO,13.02,270754,4.55,6.93,16.3399,0.016304,C,thin (avg vol <0.7M) — event-day only,1,0.08
+KALU,152.55,264482,4.52,75.51,199.8899,1.754716,C,thin (avg vol <0.7M) — event-day only,1,0.08
+KB,127.26,229470,4.81,77.44,133.29,0.476449,C,thin (avg vol <0.7M) — event-day only,1,0.08
+PRLB,96.25,215792,4.82,45.095,96.92,1.259433,C,thin (avg vol <0.7M) — event-day only,1,0.08
+SHG,80.95,202553,4.86,47.05,85.57,0.429856,C,thin (avg vol <0.7M) — event-day only,1,0.08
+NMM,91.51,143430,4.78,43.02,95,0.886792,C,thin (avg vol <0.7M) — event-day only,1,0.08
+DXPE,192.1,139635,4.7,84.04,208,1.68632,C,thin (avg vol <0.7M) — event-day only,1,0.08
+SRCE,86.09,128243,4.51,56.89,91.46,0.641509,C,thin (avg vol <0.7M) — event-day only,1,0.08
+AMC,2.94,35398897,4.82,0.93,3.18,1.636792,X,price < $5,1,0.08
+GGB,4.85,13324892,4.55,3.07,5.18,0.465579,X,price < $5,1,0.08
+PBR.A,18.52,6970037,4.87,10.755,20.05,-0.182971,X,OTC ADR / share class — no listed options,1,0.08
+TSCDY,18.99,363915,4.58,16.6545,20.54,0.140664,X,OTC ADR / share class — no listed options,1,0.08
+BNPQY,57.07,291259,4.79,37.5,65.5,1.184143,X,OTC ADR / share class — no listed options,1,0.08
+SSUMY,11.5,260704,4.76,7.1375,12.45,0.854219,X,OTC ADR / share class — no listed options,1,0.08
+BOLSY,10.32,242986,4.7,6.79,12.11,0.289855,X,OTC ADR / share class — no listed options,1,0.08
+SAFRY,96.53,206514,4.61,76.86,106.71,1.189258,X,OTC ADR / share class — no listed options,1,0.08
+VWDRY,10.11,182055,4.62,6.13,11.355,0.757033,X,OTC ADR / share class — no listed options,1,0.08
+SCBFY,62.26,155472,4.72,37.3201,63.15,0.987212,X,OTC ADR / share class — no listed options,1,0.08
+AVAL,4.96,139662,4.5,3.2,6.2,0.396739,X,price < $5,1,0.08
+DELHY,4.07,98312,4.81,1.68,4.68,1.15601,X,OTC ADR / share class — no listed options,1,0.08
+REPYY,34.93,91997,4.92,16.56,35.979992,-0.104859,X,OTC ADR / share class — no listed options,1,0.08
+JBAXY,17.23,83331,4.57,13.07,18.93,0.923273,X,OTC ADR / share class — no listed options,1,0.08
+IBDRY,93.16,70357,4.61,74.925,100.64,0.191815,X,OTC ADR / share class — no listed options,1,0.08
+NTIOF,150.08,66781,4.5,105.65,171.47,0.807692,X,OTC ADR / share class — no listed options,1,0.08
+SSDOY,22.25,59886,4.74,13.6,23.91,1.028061,X,OTC ADR / share class — no listed options,1,0.08
+SYIEY,26.53,51740,4.59,19.31,27.31,0.726342,X,OTC ADR / share class — no listed options,1,0.08
+TTNDY,81.44,50160,4.54,53.51,94.6,1.1867,X,OTC ADR / share class — no listed options,1,0.08
+NTOIY,19.37,49097,4.88,9,20.29,0.015345,X,OTC ADR / share class — no listed options,1,0.08
+IGIFF,60.22,34489,4.58,36.2673,65.17,0.86923,X,OTC ADR / share class — no listed options,1,0.08
+DTRUY,24.26,32579,4.52,19.43,28.73,1.038363,X,OTC ADR / share class — no listed options,1,0.08
+ASAIY,10.02,27696,4.76,6.2,10.35,0.371376,X,OTC ADR / share class — no listed options,1,0.08
+BKRIY,23.14,27402,4.66,15.02,23.8175,1.135549,X,OTC ADR / share class — no listed options,1,0.08
+SWRAY,13.04,26674,4.78,7.77,14.28,0.30179,X,OTC ADR / share class — no listed options,1,0.08
+IBDSF,23.39,9121,4.6,18.7,25.33,0.191815,X,OTC ADR / share class — no listed options,1,0.08
+FOJCY,5.18,5793,4.6,3.626,5.86,0.406649,X,OTC ADR / share class — no listed options,1,0.08
+KPLUY,8.93,3606,4.53,6.24,10.67,0.488491,X,OTC ADR / share class — no listed options,1,0.08
+BKEAY,2.29,572,4.81,1.5,2.5,0.445012,X,OTC ADR / share class — no listed options,1,0.08
+TGSNF,14.52,319,4.74,7.35,17.7,0.086956,X,OTC ADR / share class — no listed options,1,0.08
