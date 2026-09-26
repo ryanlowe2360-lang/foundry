@@ -3,7 +3,11 @@
 Everything below is the only human work M1 needs. Nothing here places an order; M1 is the
 journal + shadow ledger. Secrets go into Supabase, never into chat.
 
-## 1. Two secrets into Supabase (5 min)
+## 1. Secrets into Supabase (2 min) — this is separate from the `.env`
+
+The `.env` in the Seeking Alpha Agent folder feeds the M2+ daemon on your machine. The M1 edge
+functions run inside Supabase and can only see **Supabase's own secrets store**, so the same two
+values have to be pasted there once:
 
 Supabase dashboard → project **Quant edge** → **Edge Functions** → **Secrets** → *Add new secret*:
 
@@ -11,8 +15,11 @@ Supabase dashboard → project **Quant edge** → **Edge Functions** → **Secre
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | the token @BotFather gave you (`123456:ABC…`) | your `.env` line `TELEGRAM_BOT_TOKEN` |
 | `FINNHUB_API_KEY` | your Finnhub key | your `.env` line `FINNHUB_API_KEY` |
+| `TELEGRAM_CHAT_ID` (optional) | your chat id | your `.env` line `TELEGRAM_CHAT_ID` — skips step 2 |
 
-Save. Edge functions pick secrets up immediately — no redeploy.
+Save. Edge functions pick secrets up within a minute or two — no redeploy. You can confirm in the
+SQL editor: `select id, status, sent_at, error from saa.outbox order by id;` — the M1 test message
+flips from `pending` to `sent` on the next 2-minute poll.
 
 What happens next on its own: within 2 minutes the `saa_telegram_poll` cron calls `telegram-send`,
 which now has a token. The market-data cron starts filling `saa.calendar_days` at 7:15 AM ET and

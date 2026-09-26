@@ -90,6 +90,15 @@ Deno.serve(async (req: Request) => {
 
   const detail: Record<string, unknown> = { reason };
   let chatId = (await getSetting("telegram_chat_id")) ?? "";
+  // Optional shortcut: a TELEGRAM_CHAT_ID edge-function secret seeds the chat id without waiting for /start.
+  if (!chatId) {
+    const envChat = (Deno.env.get("TELEGRAM_CHAT_ID") ?? "").trim();
+    if (/^-?\d+$/.test(envChat)) {
+      chatId = envChat;
+      await setSetting("telegram_chat_id", chatId);
+      detail.chat_id_from_env = true;
+    }
+  }
 
   // 1) inbound updates: capture the chat id, answer commands
   try {
@@ -143,6 +152,6 @@ Deno.serve(async (req: Request) => {
   detail.sent = sent;
   detail.failed = failed;
   const ok = !detail.flush_error && failed === 0;
-  if (reason !== "poll" || sent || failed || detail.chat_id_captured || detail.poll_error) await logRun("telegram-send", ok, detail);
+  if (reason !== "poll" || sent || failed || detail.chat_id_captured || detail.chat_id_from_env || detail.poll_error) await logRun("telegram-send", ok, detail);
   return json({ ok, ...detail });
 });
