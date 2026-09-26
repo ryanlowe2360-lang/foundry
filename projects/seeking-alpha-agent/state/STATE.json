@@ -2,17 +2,17 @@
   "schema": 1,
   "project": "seeking-alpha-agent",
   "title": "Seeking Alpha Agent \u2014 Autonomous Intraday Options Agent",
-  "status": "spec-locked",
+  "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-09-26T17:47:02Z",
+  "last_touched": "2026-09-26T18:36:36Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
     {
       "id": 1,
       "name": "Proving Ground: journal-only pipeline (plan M1)",
-      "status": "todo",
+      "status": "in-progress",
       "acceptance": "tv-webhook POST -> saa.triggers + open saa.shadow_trades (wrong secret -> 401); saa.outbox insert -> sent_at (or recorded error); market-data calendar/quotes rows; shadow-scorer closes a trade with r_result/mfe/mae + unit test; manual fire of the 7:40 brief task writes saa.briefs + saa.checklists + outbox; validate green, pushed. Gate to M2: 10 consecutive trading days of complete records."
     },
     {
@@ -47,10 +47,10 @@
     }
   ],
   "current_milestone": 1,
-  "next_action": "Start milestone 1: Proving Ground \u2014 apply migration src/supabase/migrations/0001_saa_schema.sql to project zspbkcheounkwnpjkgrv (schema saa), then deploy src/supabase/functions/{tv-webhook,telegram-send,market-data,shadow-scorer}; verify with a net.http_post test insert into saa.triggers.",
+  "next_action": "After Ryan's setup (src/docs/SETUP.md): verify M1 acceptance #2/#3 with real data \u2014 SQL: select id, status, sent_at, error from saa.outbox order by id (expect sent); select * from saa.calendar_days where trade_date = current_date (after a 7:15 ET run); select count(*) from saa.price_ticks where ts::date = current_date (after a session); check Monday 2026-09-28's brief and tally in saa.briefs / saa.run_log; then python3 scripts/foundry.py touch seeking-alpha-agent --milestone 1 --milestone-status done, and watch saa.v_daily_records for the 10-consecutive-complete-day M1\u2192M2 gate.",
   "blockers": [],
   "open_questions": [],
-  "sessions": 0,
+  "sessions": 1,
   "tags": [
     "trading",
     "options",

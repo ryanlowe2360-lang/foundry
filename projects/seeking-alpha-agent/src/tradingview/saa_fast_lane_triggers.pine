@@ -1,0 +1,173 @@
+//@version=6
+// SAA Fast-Lane Triggers — Seeking Alpha Agent, milestone M1.
+// One indicator, five triggers, one alert per symbol. Every firing posts a JSON webhook to the
+// agent's tv-webhook edge function, which files it in the shadow ledger (no orders are placed).
+//
+// Lanes (build plan §5 / §7; corpus definitions in claude/corpus-synthesis.md §2–3):
+//   rvol         time-of-day-normalized relative volume ≥ 2× (coincident confirmation, not a signal
+//                on its own — the shadow ledger measures whether it pays)
+//   orb          opening-range break with volume confirmation (Zarattini: +0.08R above 100% RVOL,
+//                −0.02R below — this is the in-play test)
+//   vwap         session-VWAP reclaim (long) / loss (short) after ≥ 3 bars on the other side
+//   continuation first-hour continuation: at 10:30 the name closed in the top/bottom fifth of its
+//                first-hour range with range ≥ 0.6 × daily ATR and RVOL ≥ 1.5×
+//   compression  daily range-compression flag (checklist item 2): 5-session range < 1.2 × ATR(60)
+//                and 20-day realized vol in the bottom quartile of the past year — flag only,
+//                never opens a shadow trade
+//
+// Use on a 1-minute chart (5-minute also works; minutes-since-open is computed from timestamps).
+// Alert: "Any alert() function call", webhook URL = <functions_base_url>/tv-webhook, message left
+// as default (the script builds the JSON itself, including the secret you paste into the input).
+indicator("SAA Fast-Lane Triggers", shorttitle = "SAA", overlay = true, max_bars_back = 500)
+
+// ── Inputs ────────────────────────────────────────────────────────────────────────────────────
+secret        = input.string("", "Webhook secret (saa.settings.tv_webhook_secret)")
+rvolSessions  = input.int(20, "RVOL baseline sessions", minval = 5, maxval = 40)
+rvolTrigger   = input.float(2.0, "RVOL trigger (× time-of-day average)", minval = 1.0, step = 0.1)
+orbMinutes    = input.int(15, "Opening range minutes", options = [5, 15, 30])
+orbVolMult    = input.float(1.5, "ORB bar volume ≥ × 20-bar average", minval = 1.0, step = 0.1)
+orbUntilMin   = input.int(60, "ORB valid until minutes after open", minval = 20, maxval = 120)
+vwapBars      = input.int(3, "VWAP: bars on other side before a cross counts", minval = 1)
+vwapCooldown  = input.int(30, "VWAP: minutes between firings per direction", minval = 5)
+contRangeAtr  = input.float(0.6, "Continuation: first-hour range ≥ × daily ATR(14)", minval = 0.2, step = 0.1)
+contRvol      = input.float(1.5, "Continuation: RVOL ≥", minval = 1.0, step = 0.1)
+compRangeAtr  = input.float(1.2, "Compression: 5-day range < × ATR(60)", minval = 0.5, step = 0.1)
+compRvPct     = input.float(25, "Compression: 20d RV percentile ≤", minval = 5, maxval = 50)
+showLabels    = input.bool(true, "Draw labels on firings")
+
+// ── Session clock ─────────────────────────────────────────────────────────────────────────────
+inSession     = not na(time(timeframe.period, "0930-1600", "America/New_York"))
+var int   sessOpenTime = na
+var int   sessRow      = 0
+var float cumVol       = 0.0
+var float sessOpen     = na
+var float orHigh       = na
+var float orLow        = na
+var float fhHigh       = na
+var float fhLow        = na
+var bool  firedRvol    = false
+var bool  firedOrbUp   = false
+var bool  firedOrbDn   = false
+var bool  firedCont    = false
+var bool  firedComp    = false
+var int   lastVwapUp   = na
+var int   lastVwapDn   = na
+
+newSession = inSession and (na(sessOpenTime) or not inSession[1] or (time - sessOpenTime) > 8 * 3600 * 1000)
+if newSession
+    sessOpenTime := time
+    sessRow      := (sessRow + 1) % rvolSessions
+    cumVol       := 0.0
+    sessOpen     := open
+    orHigh       := high
+    orLow        := low
+    fhHigh       := high
+    fhLow        := low
+    firedRvol    := false
+    firedOrbUp   := false
+    firedOrbDn   := false
+    firedCont    := false
+    firedComp    := false
+    lastVwapUp   := na
+    lastVwapDn   := na
+
+minSinceOpen = inSession ? math.round((time_close - sessOpenTime) / 60000.0) : na   // minutes elapsed at this bar's close
+barMinutes   = timeframe.in_seconds(timeframe.period) / 60
+
+// ── Time-of-day relative volume (cumulative volume vs the same minute over N sessions) ────────
+var matrix<float> volMat = matrix.new<float>(rvolSessions, 400, na)
+if inSession
+    cumVol += volume
+    if newSession
+        for c = 0 to 399
+            matrix.set(volMat, sessRow, c, na)
+    col = math.min(math.max(minSinceOpen, 0), 399)
+    matrix.set(volMat, sessRow, col, cumVol)
+
+f_avgCumAt(col) =>
+    float s = 0.0
+    int n = 0
+    for r = 0 to rvolSessions - 1
+        if r != sessRow
+            v = matrix.get(volMat, r, col)
+            if not na(v) and v > 0
+                s += v
+                n += 1
+    n >= 5 ? s / n : na
+
+rvolTod = inSession ? cumVol / f_avgCumAt(math.min(math.max(minSinceOpen, 0), 399)) : na
+
+// ── Session references ────────────────────────────────────────────────────────────────────────
+vwap      = ta.vwap(hlc3)
+avgBarVol = ta.sma(volume, 20)[1]
+if inSession and minSinceOpen <= orbMinutes
+    orHigh := math.max(orHigh, high)
+    orLow  := math.min(orLow, low)
+if inSession and minSinceOpen <= 60
+    fhHigh := math.max(fhHigh, high)
+    fhLow  := math.min(fhLow, low)
+
+[dAtr14, dAtr60, dRange5, dRvPct] = request.security(syminfo.tickerid, "D",
+     [ta.atr(14)[1], ta.atr(60)[1], (ta.highest(high, 5) - ta.lowest(low, 5))[1],
+      ta.percentrank(ta.stdev(math.log(close / close[1]), 20), 252)[1]],
+     lookahead = barmerge.lookahead_off)
+
+// ── Message builder ───────────────────────────────────────────────────────────────────────────
+f_msg(string lane, string dir, string extra) =>
+    '{"secret":"' + secret + '","symbol":"' + syminfo.ticker + '","lane":"' + lane + '","direction":"' + dir +
+     '","price":' + str.tostring(close, "#.####") +
+     ',"bar_time":"' + str.format_time(time_close, "yyyy-MM-dd'T'HH:mm:ss", "UTC") + 'Z"' +
+     ',"tf":"' + timeframe.period + '","rvol":' + (na(rvolTod) ? "null" : str.tostring(rvolTod, "#.##")) +
+     ',"vwap":' + str.tostring(vwap, "#.####") + extra + '}'
+
+f_fire(string lane, string dir, string extra, color c) =>
+    alert(f_msg(lane, dir, extra), alert.freq_once_per_bar_close)
+    if showLabels
+        label.new(bar_index, dir == "short" ? low : high, lane + (dir == "none" ? "" : " " + dir),
+                  style = dir == "short" ? label.style_label_up : label.style_label_down, color = c, textcolor = color.white, size = size.tiny)
+
+// ── 1. RVOL ≥ 2× (once per session, after the first 5 minutes) ───────────────────────────────
+if inSession and not firedRvol and minSinceOpen >= 5 and not na(rvolTod) and rvolTod >= rvolTrigger
+    firedRvol := true
+    f_fire("rvol", close >= sessOpen ? "long" : "short", ',"session_move":' + str.tostring((close / sessOpen - 1) * 100, "#.##"), color.orange)
+
+// ── 2. Opening-range break with volume ────────────────────────────────────────────────────────
+orbWindow = inSession and minSinceOpen > orbMinutes and minSinceOpen <= orbUntilMin
+volOk     = volume >= orbVolMult * avgBarVol and (na(rvolTod) or rvolTod >= 1.0)
+if orbWindow and not firedOrbUp and close > orHigh and volOk
+    firedOrbUp := true
+    f_fire("orb", "long", ',"or_high":' + str.tostring(orHigh, "#.####") + ',"or_low":' + str.tostring(orLow, "#.####"), color.green)
+if orbWindow and not firedOrbDn and close < orLow and volOk
+    firedOrbDn := true
+    f_fire("orb", "short", ',"or_high":' + str.tostring(orHigh, "#.####") + ',"or_low":' + str.tostring(orLow, "#.####"), color.red)
+
+// ── 3. VWAP reclaim / loss ────────────────────────────────────────────────────────────────────
+belowRun = ta.barssince(close > vwap)   // bars since last close above vwap
+aboveRun = ta.barssince(close < vwap)
+crossUp  = ta.crossover(close, vwap) and belowRun[1] >= vwapBars - 1 and inSession and minSinceOpen >= 5
+crossDn  = ta.crossunder(close, vwap) and aboveRun[1] >= vwapBars - 1 and inSession and minSinceOpen >= 5
+if crossUp and volume >= avgBarVol and (na(lastVwapUp) or (time - lastVwapUp) >= vwapCooldown * 60000)
+    lastVwapUp := time
+    f_fire("vwap", "long", ',"event":"reclaim"', color.teal)
+if crossDn and volume >= avgBarVol and (na(lastVwapDn) or (time - lastVwapDn) >= vwapCooldown * 60000)
+    lastVwapDn := time
+    f_fire("vwap", "short", ',"event":"loss"', color.maroon)
+
+// ── 4. First-hour continuation (evaluated on the bar closing at 10:30) ───────────────────────
+fhRange = fhHigh - fhLow
+if inSession and not firedCont and minSinceOpen >= 60 and minSinceOpen < 60 + barMinutes and not na(dAtr14)
+    pos = fhRange > 0 ? (close - fhLow) / fhRange : 0.5
+    if fhRange >= contRangeAtr * dAtr14 and not na(rvolTod) and rvolTod >= contRvol and (pos >= 0.8 or pos <= 0.2)
+        firedCont := true
+        f_fire("continuation", pos >= 0.8 ? "long" : "short", ',"fh_range_atr":' + str.tostring(fhRange / dAtr14, "#.##") + ',"fh_pos":' + str.tostring(pos, "#.##"), color.purple)
+
+// ── 5. Range-compression flag (once per session, first bar) ──────────────────────────────────
+if inSession and not firedComp and minSinceOpen <= barMinutes and not na(dAtr60) and not na(dRange5)
+    firedComp := true
+    if dRange5 < compRangeAtr * dAtr60 and (na(dRvPct) or dRvPct <= compRvPct)
+        f_fire("compression", "none", ',"range5_atr60":' + str.tostring(dRange5 / dAtr60, "#.##") + ',"rv20_pct":' + (na(dRvPct) ? "null" : str.tostring(dRvPct, "#")), color.gray)
+
+// ── Plots ─────────────────────────────────────────────────────────────────────────────────────
+plot(inSession ? vwap : na, "VWAP", color = color.new(color.blue, 0), linewidth = 1)
+plot(inSession and minSinceOpen > orbMinutes ? orHigh : na, "OR high", color = color.new(color.green, 40), style = plot.style_linebr)
+plot(inSession and minSinceOpen > orbMinutes ? orLow : na, "OR low", color = color.new(color.red, 40), style = plot.style_linebr)

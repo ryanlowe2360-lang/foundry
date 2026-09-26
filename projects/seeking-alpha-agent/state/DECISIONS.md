@@ -3,6 +3,28 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D7 (2026-09-26) — The Foundry auto-build stays off this project via a recorded blocker
+
+- **Context:** Ryan's "Foundry daily auto-build" scheduled task picks the stalest in-flight project with no
+  blockers/open questions and builds a milestone unattended. M2+ needs tastytrade sandbox OAuth; M1's
+  remaining acceptance needs Ryan's secrets. An unattended run touching live cron/edge functions is
+  not wanted.
+- **Chose:** keep a truthful blocker in STATE.json until Ryan clears the setup steps; build sessions
+  are interactive ("M2 build" chat in the Project).
+- **Revisit if:** Ryan wants nightly unattended builds here — then clear the blocker after M2's keys exist.
+
+## D6 (2026-09-26) — Scheduled Claude tasks are the M1 judgment layer; each run guards against duplicates
+
+- **Context:** The 7:40 brief, 4:20 tally and Friday review run as Anthropic scheduled tasks (fresh
+  sessions, Supabase connector attached, automatic approval). A manual `fire_trigger` with appended text
+  is delivered as a second turn after the prompt's first turn completes.
+- **Chose:** prompts are complete standalone instructions (`src/prompts/`), write only via `public.saa_*`
+  RPC + plain SQL through the connector, never HTTP; the brief refuses to run twice for a date and
+  deletes dry-run checklists before writing real ones; every run logs to `saa.run_log`.
+- **Revisit if:** the connector is missing in a scheduled run (fallback: a pg_cron-driven edge function
+  calling the Claude API directly) or the brief needs Ryan's browser (Seeking Alpha reads) — then that
+  part moves to an interactive morning session.
+
 ## D5 (2026-09-26) — Shadow trades in M1 are scored on the underlying's 1-min quote path with a modeled 0DTE option price
 
 - **Context:** M1 has no options data (DXLink arrives in M2) and Finnhub's free tier has no
