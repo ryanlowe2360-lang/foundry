@@ -5,14 +5,14 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-09-26T22:32:56Z",
+  "last_touched": "2026-09-26T22:46:47Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
     {
       "id": 1,
       "name": "Proving Ground: journal-only pipeline (plan M1)",
-      "status": "in-progress",
+      "status": "done",
       "acceptance": "tv-webhook POST -> saa.triggers + open saa.shadow_trades (wrong secret -> 401); saa.outbox insert -> sent_at (or recorded error); market-data calendar/quotes rows; shadow-scorer closes a trade with r_result/mfe/mae + unit test; manual fire of the 7:40 brief task writes saa.briefs + saa.checklists + outbox; validate green, pushed. Gate to M2: 10 consecutive trading days of complete records."
     },
     {
@@ -46,8 +46,8 @@
       "acceptance": "Unattended live session with trades reported; forced Tier 1 breach refused and logged in sandbox; status review until Ryan ships."
     }
   ],
-  "current_milestone": 1,
-  "next_action": "After the Supabase secrets exist: confirm saa.outbox row 1 is sent and saa.settings.telegram_chat_id is set; force a calendar fetch with select saa.call_function('market-data', '{\"mode\":\"calendar\",\"force\":true}'::jsonb) and check saa.calendar_days + net._http_response; then watch Monday 2026-09-28 (brief 7:40, ticks, tally 4:20) and mark milestone 1 done with python3 scripts/foundry.py touch seeking-alpha-agent --milestone 1 --milestone-status done. Alert set: SPY/QQQ/IWM + tier A from notes/universe-2026-09-26.md.",
+  "current_milestone": 2,
+  "next_action": "Start milestone 2 (daemon data plane) in an interactive 'M2 build' chat with the Seeking Alpha Agent folder linked: scaffold src/daemon/ (Python 3.11, asyncio, tastytrade SDK) \u2014 OAuth refresh-token login against the sandbox using TT_SANDBOX_* from .env, DXLink quote/greeks stream + 1-min bars for SPY/QQQ/IWM, option-chain snapshots every 5 min, SQLite hot state, 9:25 heartbeat + 4:20 tally to Telegram via saa.outbox; verify with a full sandbox session run (>=380 bars/symbol, zero unhandled exceptions) and pytest src/tests/ green. Before that, on any day: read saa.v_daily_records to confirm the M1 gate is progressing.",
   "blockers": [],
   "open_questions": [],
   "sessions": 2,

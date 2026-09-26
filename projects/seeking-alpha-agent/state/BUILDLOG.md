@@ -14,8 +14,16 @@ Append-only. Newest entry on top. Every session that touches this project adds o
   `saa.settings.telegram_chat_id` empty; `saa.outbox` row 1 still `pending`, attempts 0 (nothing lost).
   `.env` on the Mac: TT_PROD_* and TT_SANDBOX_* (client id/secret/refresh token), TELEGRAM_BOT_TOKEN,
   TELEGRAM_CHAT_ID, FINNHUB_API_KEY all non-empty → M2's credential blocker is gone.
-- **Stopped at:** M1 built; the two live paths (Telegram delivery, Finnhub/Cboe fetch) flip on as soon as
-  the two secrets are pasted into Supabase. Monday 2026-09-28 is the first real cycle.
+- **Verified after Ryan added the Supabase secrets (22:44 UTC):**
+  - Acceptance #2 complete: `telegram-send` poll → `{"sent":1,"failed":0,"updates":1,"chat_id_captured":true}`;
+    `saa.outbox` row 1 `sent`, telegram_message_id 6; Ryan's screenshot shows the welcome + the M1 test message at 6:44 PM ET.
+  - Acceptance #3 complete: forced `market-data` calendar → `{"ok":true, vix:{vix:14.87, vix1d:12.51, vix9d:12.76,
+    vix3m:17.93}, errors:["econ (premium on free tier): HTTP 403"]}` with SPY/QQQ/IWM quotes (c/o/h/l/pc); Monday
+    2026-09-28 row pre-fetched: 49 earnings names (3 BMO, 8 AMC), VIX term, index quotes. Saturday row removed.
+  - All six M1 acceptance items now have evidence → milestone 1 marked done. The 10-consecutive-complete-day
+    streak (from Monday 2026-09-28) is the entry gate for M2, observed in `saa.v_daily_records`.
+- **Stopped at:** M1 done. Next session = "M2 build" (daemon data plane) in an interactive chat linked to Ryan's
+  Mac so the daemon can read `.env` (tastytrade sandbox OAuth); not before the 10-day gate unless Ryan says so.
 
 ## 2026-09-26 — session 2 (dry-run brief + symbol universe)
 
