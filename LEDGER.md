@@ -1,6 +1,10 @@
 # Foundry Ledger
 
-*Generated 2026-09-27T16:53:06Z by `scripts/foundry.py ledger` — do not edit by hand.*
+*Generated 2026-09-27T21:38:11Z by `scripts/foundry.py ledger` — do not edit by hand.*
+
+## 🙋 Needs you
+
+- **Seeking Alpha Agent — Autonomous Intraday Options Agent** (`seeking-alpha-agent`) — **question:** M2 acceptance evidence still needs Ryan's Terminal: re-run ./run.sh smoke after the spot/cboe/logging fixes (expect all PASS), then ./run.sh session on a trading day (EOD report: ≥380 bars per index symbol, 80 snapshots per underlying, 0 unhandled).
 
 ## 🔨 In flight
 

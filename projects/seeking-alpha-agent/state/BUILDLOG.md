@@ -58,6 +58,29 @@ Append-only. Newest entry on top. Every session that touches this project adds o
   now handles both (test `test_mirror_headers_for_both_key_styles`; suite 29 green); SETUP.md §5 and README name both
   keys and where they are (Project Settings → API Keys). `mirror.py`, README, SETUP.md redeployed to the Mac (checksums
   match).
+- **First real smoke run (Ryan's Mac, 17:29 ET) — `RESULT: ALL CRITICAL STEPS PASSED`:** env PASS · supabase_read PASS
+  (`saa_daemon_status`) · sandbox_login PASS (account …9103, **Cash**, options level "Covered And Cash Secured") ·
+  prod_login PASS · quote_token PASS · **dxlink PASS (live SPY quote 771.69/772.09 on a Sunday)** · chain PASS (SPY: 33
+  expirations) · nasdaq_halts PASS (10 rows) · sqlite PASS · **supabase_write PASS** · **telegram PASS via outbox**
+  (outbox row 4 `sent`, Telegram message id 8). Verified from the connector: `saa.daemon_runs` smoke row `done`,
+  `saa.run_log` `daemon:smoke` ok=true, 10 halts + a VIX row mirrored, `saa.settings.daemon_last_seen` stamped.
+  Two non-critical misses, both fixed and redeployed (checksums match):
+  1. `spot_rest` FAIL — `/market-data/by-type` returned a non-2xx whose `error` is a plain string; the SDK's
+     `validate_response` does `content.get(...)` on it (AttributeError), so the real message was lost and the SPY plan
+     was skipped ("no spot → no plan"). `Brokerage.spot_prices` is now a fallback chain that never raises: REST by-type
+     (raw call, logs status + body) → REST per symbol → DXLink quote mid (the path the smoke proved). Tests
+     `test_daemon_smoke_regressions.py` (4 spot tests).
+  2. `cboe_vix` WARN — 1 of 4 parallel CDN fetches failed `CERTIFICATE_VERIFY_FAILED` via the macOS trust store while
+     the other three succeeded. `fetch_vix_term` now retries each symbol 3× and then tries once through a certifi-backed
+     client (`http.certifi_client()`, `certifi` added to requirements). Test `test_vix_retries_then_fallback_client`.
+  3. SDK DEBUG chatter reached the terminal: `tastytrade/__init__.py` does `logger.setLevel(DEBUG)` at import, after
+     `setup_logging`. Fixed by `quiet_sdk_loggers()` after every SDK import plus a handler-level `QuietSdkFilter`;
+     in a live session that chatter would have logged every websocket frame. Test `test_sdk_logger_is_quiet_after_setup`.
+  Suite now **35 passed**. Fresh-copy smoke in the container shows no DEBUG lines and "after 4 tries" on Cboe.
+  Ryan re-runs `./run.sh smoke` (expect spot_rest PASS with prices, chain PASS with a plan, cboe_vix PASS).
+- **For M4 (recorded as an open question):** the sandbox account is a *Cash* account at options level "Covered And Cash
+  Secured" — that tier may not permit buying long calls/puts. Verify (or raise the level / create a margin sandbox
+  account at developer.tastytrade.com sandbox tools) before the M4 order path.
 - **Not yet verified (needs Ryan's Terminal — the linked shell cannot reach tastytrade):** the real sandbox session run.
   M2 acceptance therefore stays open: (1) `./run.sh smoke` (any day) — sandbox login, production login + DXLink token,
   SPY chain, a live quote, VIX, halts, Supabase write, Telegram; (2) `./run.sh session` on a trading day → EOD report

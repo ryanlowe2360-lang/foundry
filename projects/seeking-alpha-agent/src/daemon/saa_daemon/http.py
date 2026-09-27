@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Protocol
+
+log = logging.getLogger("saa.http")
 
 
 class HttpClient(Protocol):
@@ -21,10 +24,12 @@ class HttpError(Exception):
 
 
 class Httpx2Client:
-    def __init__(self, user_agent: str = "seeking-alpha-agent-daemon/0.2"):
+    """`verify` follows httpx2: True = the system trust store (truststore), or a CA-bundle path / SSLContext."""
+
+    def __init__(self, user_agent: str = "seeking-alpha-agent-daemon/0.2", verify: Any = True):
         import httpx2  # local import so tests without the SDK stack can still import this module
 
-        self._c = httpx2.AsyncClient(headers={"User-Agent": user_agent}, follow_redirects=True)
+        self._c = httpx2.AsyncClient(headers={"User-Agent": user_agent}, follow_redirects=True, verify=verify)
 
     async def get_text(self, url: str, *, headers: dict[str, str] | None = None, timeout: float = 15.0) -> str:
         r = await self._c.get(url, headers=headers, timeout=timeout)
@@ -48,3 +53,19 @@ class Httpx2Client:
 
     async def aclose(self) -> None:
         await self._c.aclose()
+
+
+def certifi_client() -> Httpx2Client | None:
+    """A second client that trusts Mozilla's CA bundle (certifi) instead of the OS trust store. Used only as a
+    fallback when a public CDN (Cboe) fails TLS verification through the system store — seen intermittently on macOS
+    when an edge node serves a chain without its intermediate certificate."""
+    try:
+        import certifi
+    except ImportError:
+        log.debug("certifi not installed — no TLS fallback client")
+        return None
+    try:
+        return Httpx2Client(verify=certifi.where())
+    except Exception as e:  # noqa: BLE001
+        log.debug("certifi client unavailable: %s", e)
+        return None

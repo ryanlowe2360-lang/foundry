@@ -9,12 +9,14 @@ No order code lives anywhere in this package. Production brokerage is refused by
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any
 
 from .config import Settings
+from .log import quiet_sdk_loggers
 
 log = logging.getLogger("saa.broker")
 
@@ -48,6 +50,7 @@ class Brokerage:
     async def open(self) -> "Brokerage":
         from tastytrade import Session  # imported here so the rest of the package is SDK-free
 
+        quiet_sdk_loggers()  # the SDK forces its logger to DEBUG at import time
         s = self.settings
         self.data_info = SessionInfo(s.data_env)
         self.broker_info = SessionInfo(s.broker_env)
@@ -102,25 +105,108 @@ class Brokerage:
         await self.stack.aclose()
 
     # ------------------------------------------------------------- data helpers
-    async def spot_prices(self, symbols: list[str]) -> dict[str, float]:
-        """REST market data (mark, else last, else mid) for the given underlyings, 100 per call."""
-        if self.data is None or not symbols:
-            return {}
-        from tastytrade.market_data import get_market_data_by_type
+    @staticmethod
+    def _px(item: dict[str, Any]) -> float | None:
+        """Best spot from a raw tastytrade market-data item (dasherized keys): mark → last → mid → close → prev-close."""
+        for k in ("mark", "last", "mid", "close", "prev-close", "prev-day-close"):
+            v = item.get(k)
+            if v not in (None, "", "NaN"):
+                try:
+                    f = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if f > 0:
+                    return f
+        return None
 
+    async def _rest_json(self, path: str, params: dict[str, Any] | None = None) -> tuple[int, Any]:
+        """Raw GET on the data session; never raises on a non-2xx (returns status + parsed body or text)."""
+        await self.data.refresh()
+        r = await self.data._client.get(path, params=params)
+        try:
+            body: Any = r.json()
+        except Exception:  # noqa: BLE001
+            body = r.text
+        return r.status_code, body
+
+    async def _spots_rest_by_type(self, symbols: list[str]) -> dict[str, float]:
         out: dict[str, float] = {}
         eq = [s for s in symbols if self.settings.rest_instrument_kind(s) == "equity"]
         ix = [s.lstrip("$") for s in symbols if self.settings.rest_instrument_kind(s) == "index"]
-        for i in range(0, max(len(eq), 1), 100):
-            chunk_eq = eq[i:i + 100]
-            chunk_ix = ix if i == 0 else []
-            if not chunk_eq and not chunk_ix:
+        params: dict[str, Any] = {}
+        if eq:
+            params["equity"] = eq[:100]
+        if ix:
+            params["index"] = ix[:100]
+        if not params:
+            return out
+        status, body = await self._rest_json("/market-data/by-type", params)
+        items = body.get("data", {}).get("items") if isinstance(body, dict) else None
+        if status // 100 != 2 or not isinstance(items, list):
+            log.warning("market-data/by-type → HTTP %s: %s", status, str(body)[:200])
+            return out
+        for it in items:
+            px = self._px(it)
+            if px and it.get("symbol"):
+                out[str(it["symbol"]).upper()] = px
+        return out
+
+    async def _spots_rest_single(self, symbols: list[str]) -> dict[str, float]:
+        out: dict[str, float] = {}
+        for s in symbols:
+            kind = self.settings.rest_instrument_kind(s)
+            status, body = await self._rest_json(f"/market-data/{kind}/{s.lstrip('$')}")
+            data = body.get("data") if isinstance(body, dict) else None
+            px = self._px(data) if isinstance(data, dict) else None
+            if px:
+                out[s] = px
+            else:
+                log.warning("market-data/%s/%s → HTTP %s: %s", kind, s, status, str(body)[:160])
+        return out
+
+    async def _spots_dxlink(self, symbols: list[str], window: float = 6.0) -> dict[str, float]:
+        """Mid of the first DXLink quote per symbol — works whenever the streamer does (weekends included)."""
+        from tastytrade import DXLinkStreamer
+        from tastytrade.dxfeed import Quote
+
+        out: dict[str, float] = {}
+        want = set(symbols)
+        async with DXLinkStreamer(self.data) as st:
+            await st.subscribe(Quote, sorted(want))
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + window
+            while want and loop.time() < deadline:
+                try:
+                    q = await asyncio.wait_for(st.get_event(Quote), timeout=max(0.05, deadline - loop.time()))
+                except TimeoutError:
+                    break
+                sym = q.event_symbol
+                if sym in want and q.bid_price and q.ask_price:
+                    out[sym] = float((q.bid_price + q.ask_price) / 2)
+                    want.discard(sym)
+        return out
+
+    async def spot_prices(self, symbols: list[str]) -> dict[str, float]:
+        """Spot per underlying: REST by-type → REST per symbol → DXLink quote mid. Each step only fills what the previous
+        one missed and logs its failure (status + body) instead of raising, so a chain plan is never lost to one bad call."""
+        if self.data is None or not symbols:
+            return {}
+        symbols = list(dict.fromkeys(s.upper() for s in symbols))
+        out: dict[str, float] = {}
+        for name, fn in (("rest_by_type", self._spots_rest_by_type), ("rest_single", self._spots_rest_single), ("dxlink", self._spots_dxlink)):
+            missing = [s for s in symbols if s not in out]
+            if not missing:
                 break
-            items = await get_market_data_by_type(self.data, equities=chunk_eq or None, indices=chunk_ix or None)
-            for m in items:
-                px = m.mark or m.last or m.mid or m.close or m.prev_close
-                if px:
-                    out[str(m.symbol).upper()] = float(px)
+            try:
+                got = await fn(missing)
+                out.update(got)
+                if got:
+                    log.info("spots via %s: %s", name, ", ".join(f"{k} {v:.2f}" for k, v in sorted(got.items())))
+            except Exception as e:  # noqa: BLE001
+                log.warning("spots via %s failed: %s: %s", name, type(e).__name__, str(e)[:160])
+        still = [s for s in symbols if s not in out]
+        if still:
+            log.error("no spot price for %s after all three methods", " ".join(still))
         return out
 
     async def nested_chain(self, underlying: str) -> Any:

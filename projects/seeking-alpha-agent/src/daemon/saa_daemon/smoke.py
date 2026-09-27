@@ -15,7 +15,7 @@ from .chains import from_sdk_nested, plan_chain
 from .clock import et, is_trading_day
 from .config import Settings, readiness
 from .halts import fetch_halts
-from .http import Httpx2Client
+from .http import Httpx2Client, certifi_client
 from .mirror import MirrorError, SupabaseMirror
 from .store import Store
 from .telegram import Notifier
@@ -125,10 +125,10 @@ async def run_smoke(settings: Settings, *, telegram: bool = True) -> int:
 
     # Cboe + Nasdaq
     try:
-        term = await fetch_vix_term(http, now)
+        term = await fetch_vix_term(http, now, fallback=certifi_client())
         ok = term.get("vix") is not None
         rep.add("cboe_vix", "PASS" if ok else "WARN", f"VIX {term.get('vix')} · 1D {term.get('vix1d')} · 9D {term.get('vix9d')} · 3M {term.get('vix3m')} ({term.get('shape')})"
-                + (f" errors: {term['errors']}" if term.get("errors") else ""))
+                + (f" errors: {term['errors']}" if term.get("errors") else "") + (f" notes: {term['notes']}" if term.get("notes") else ""))
         if ok:
             store.insert_vix(now, term)
         detail["vix"] = {k: term.get(k) for k in ("vix", "vix1d", "vix9d", "vix3m")}

@@ -59,6 +59,7 @@ class Daemon:
         self.host = host or socket.gethostname().split(".")[0]
         self._store = store
         self._http = http
+        self._http_fallback: HttpClient | None = None
         self._brokerage = brokerage
         self._feed_factory = feed_factory
         self._mirror = mirror
@@ -146,8 +147,9 @@ class Daemon:
 
     async def _components(self) -> None:
         if self._http is None:
-            from .http import Httpx2Client
+            from .http import Httpx2Client, certifi_client
             self._http = Httpx2Client()
+            self._http_fallback = certifi_client()
         if self._mirror is None:
             self._mirror = SupabaseMirror(self.settings, self.store, self._http)
         if self._notifier is None:
@@ -328,7 +330,7 @@ class Daemon:
     async def poll_vix(self) -> None:
         if self._http is None:
             return
-        term = await fetch_vix_term(self._http, self.now())
+        term = await fetch_vix_term(self._http, self.now(), fallback=getattr(self, "_http_fallback", None))
         if any(term.get(k) is not None for k in ("vix", "vix1d", "vix9d", "vix3m")):
             self.store.insert_vix(self.now(), term)
             if self.vix_first is None:

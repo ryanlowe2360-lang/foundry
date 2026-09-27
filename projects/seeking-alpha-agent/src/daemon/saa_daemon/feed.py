@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from .events import CandleEvt, Evt, ProfileEvt, QuoteEvt, SummaryEvt, TradeEvt, from_sdk, to_record
+from .log import quiet_sdk_loggers
 
 log = logging.getLogger("saa.feed")
 
@@ -96,6 +97,7 @@ class DXLinkFeed:
         from tastytrade import DXLinkStreamer
         from tastytrade.dxfeed import Candle, Greeks, Profile, Quote, Summary, Trade
 
+        quiet_sdk_loggers()
         self._plan = FeedPlan(set(plan.underlyings), set(plan.candles), set(plan.options), plan.candle_start)
         async with DXLinkStreamer(self.session) as st:
             self._streamer = st

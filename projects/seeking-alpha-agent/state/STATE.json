@@ -5,7 +5,7 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-09-27T16:53:06Z",
+  "last_touched": "2026-09-27T21:38:11Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
@@ -49,7 +49,9 @@
   "current_milestone": 2,
   "next_action": "Close M2 (daemon data plane): code is complete, simulated and delivered to Desktop/Seeking Alpha Agent /agent/daemon (v0.2.0). Ryan: paste the Supabase service_role key into the empty SUPABASE_SERVICE_ROLE_KEY line of .env, run `./run.sh smoke` from agent/daemon (expect PASS on every line; dxlink WARN is fine when the market is closed), then on a trading day run `./run.sh session` before 9:20 AM ET with the Mac awake. Next Claude session: read the pasted smoke output + EOD Telegram report, confirm in Supabase `select * from saa.run_log where job = 'daemon:session' order by ts desc limit 1` and `select * from saa.daemon_runs order by started_at desc limit 1` that bars.complete >= 380 for SPY/QQQ/IWM, snapshots per underlying == snapshots_expected (80), unhandled == 0; if so mark milestone 2 done (foundry.py touch --milestone 2 --milestone-status done --current-milestone 3) and start M3 (rules engine + Kelly) in src/daemon/saa_daemon/engine/; if a step failed, fix from the smoke/EOD text (src/daemon/saa_daemon/{broker,feed,mirror}.py) and re-run smoke. Verify with: pytest src/tests -q (28 green) + the run_log row.",
   "blockers": [],
-  "open_questions": [],
+  "open_questions": [
+    "M2 acceptance evidence still needs Ryan's Terminal: re-run ./run.sh smoke after the spot/cboe/logging fixes (expect all PASS), then ./run.sh session on a trading day (EOD report: \u2265380 bars per index symbol, 80 snapshots per underlying, 0 unhandled)."
+  ],
   "sessions": 3,
   "tags": [
     "trading",

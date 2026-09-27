@@ -1,3 +1,5 @@
 # Seeking Alpha Agent daemon — runtime dependencies (Python 3.11+).
 # tastytrade pulls in httpx2[ws], anyio, pydantic and pandas-market-calendars.
 tastytrade>=13.2,<14
+# Mozilla CA bundle — fallback trust store for the Cboe CDN when the OS store rejects an edge node's chain
+certifi>=2024.2

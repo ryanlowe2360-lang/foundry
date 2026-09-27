@@ -1,5 +1,7 @@
 """Cboe VIX term structure (VIX, VIX1D, VIX9D, VIX3M) from the same delayed-quotes CDN endpoint the M1
-`market-data` edge function uses. Parsing is separate from fetching so it can be tested on fixtures."""
+`market-data` edge function uses. Each symbol is fetched with retries (the CDN occasionally fails a TLS handshake on
+one connection while the others succeed) and, if the system trust store keeps rejecting the chain, once more through
+the certifi-backed fallback client. Parsing is separate from fetching so it can be tested on fixtures."""
 from __future__ import annotations
 
 import asyncio
@@ -31,17 +33,28 @@ def term_shape(term: dict[str, Any]) -> str | None:
     return "contango" if v < v3 else "backwardation" if v > v3 else "flat"
 
 
-async def fetch_vix_term(http: HttpClient, now: datetime) -> dict[str, Any]:
+async def fetch_vix_term(http: HttpClient, now: datetime, *, fallback: HttpClient | None = None, attempts: int = 3,
+                         retry_delay: float = 0.4) -> dict[str, Any]:
     out: dict[str, Any] = {"fetched_at": now.isoformat(), "errors": []}
 
     async def one(key: str, sym: str) -> None:
-        try:
-            out[key] = parse_cboe_quote(await http.get_json(f"{CBOE}/{sym}.json", timeout=12.0))
-            if out[key] is None:
-                out["errors"].append(f"cboe {sym}: empty")
-        except Exception as e:  # noqa: BLE001 - recorded, never raised
-            out[key] = None
-            out["errors"].append(f"cboe {sym}: {type(e).__name__}: {str(e)[:120]}")
+        url = f"{CBOE}/{sym}.json"
+        last: str | None = None
+        clients = [http] * max(1, attempts) + ([fallback] if fallback is not None else [])
+        for i, client in enumerate(clients):
+            try:
+                out[key] = parse_cboe_quote(await client.get_json(url, timeout=12.0))
+                if out[key] is not None:
+                    if i >= attempts:
+                        out.setdefault("notes", []).append(f"{sym}: via certifi fallback")
+                    return
+                last = "empty"
+            except Exception as e:  # noqa: BLE001 - recorded, never raised
+                last = f"{type(e).__name__}: {str(e)[:120]}"
+            if i + 1 < len(clients):
+                await asyncio.sleep(retry_delay)
+        out[key] = None
+        out["errors"].append(f"cboe {sym}: {last} (after {len(clients)} tries)")
 
     await asyncio.gather(*(one(k, s) for k, s in TERM))
     out["shape"] = term_shape(out)
