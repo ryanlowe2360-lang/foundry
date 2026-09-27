@@ -3,6 +3,17 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D15 (2026-09-27) — Spot prices come from DXLink; tastytrade REST market data is a fallback only
+
+- **Context:** the second real smoke run (18:19 ET) showed `/market-data/by-type` and `/market-data/equity/<sym>` answer
+  **403 Forbidden** on Ryan's production OAuth app (not entitled to REST market data), and a retry produced a **429** from
+  nginx; DXLink quote tokens and streaming work fine (SPY 771.89, QQQ 745.30, IWM 282.23 via the streamer).
+- **Chose:** `Brokerage.spot_prices` probes DXLink first (6-second quote window), then REST by-type, then REST per symbol;
+  after any 403 the REST steps are skipped for the rest of the process. Option Quote/Greeks DXLink aggregation set to 2 s
+  (snapshots are 5-minute; halves the event rate at the open).
+- **Revisit if:** tastytrade grants the app REST market-data access (then REST could seed spots faster on cold start) or
+  the DXLink probe proves slow at 09:20 (then start the underlying feed first and plan chains from its quotes).
+
 ## D14 (2026-09-27) — `saa.v_daily_records` shows only dates ≤ today (migration 0006)
 
 - **Context:** the hand-maintained econ calendar (D13 scope) puts 26 future rows into `saa.calendar_days`; the

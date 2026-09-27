@@ -78,6 +78,17 @@ Append-only. Newest entry on top. Every session that touches this project adds o
      in a live session that chatter would have logged every websocket frame. Test `test_sdk_logger_is_quiet_after_setup`.
   Suite now **35 passed**. Fresh-copy smoke in the container shows no DEBUG lines and "after 4 tries" on Cboe.
   Ryan re-runs `./run.sh smoke` (expect spot_rest PASS with prices, chain PASS with a plan, cboe_vix PASS).
+- **Second real smoke run (18:19 ET) — `RESULT: ALL CRITICAL STEPS PASSED`, every line PASS, no DEBUG lines:** env ·
+  supabase_read · sandbox_login (…9103) · prod_login · quote_token · **spot_rest PASS via the fallback chain** (REST
+  by-type → HTTP 403 Forbidden, per-symbol → 403 / 429; **DXLink gave IWM 282.23, QQQ 745.30, SPY 771.89**) · **chain PASS:
+  SPY 33 expirations, plan 2 exp / 80 strikes / 160 option symbols** · **dxlink PASS: SPY 771.69/772.09 and a live option
+  quote `.SPY260928P752 0.03/0.04` (Monday's 0DTE)** · cboe_vix PASS 14.87 / 12.51 / 12.76 / 17.93 contango (retries
+  worked) · nasdaq_halts 10 · sqlite · supabase_write · telegram via outbox. `certifi` installed by run.sh
+  ("installing dependencies ..."). Follow-up fix (D15): DXLink is now the primary spot source, REST a fallback that is
+  skipped for the rest of the run after a 403 (no more 403/429 noise every 5 minutes); option Quote/Greeks aggregation
+  2 s. Tests updated (`test_spot_chain_dxlink_first_then_rest`, `test_spot_chain_rest_403_is_remembered`); **35 passed**.
+  `broker.py` + `feed.py` redeployed (checksums match). **M2 smoke evidence is complete; only the trading-day session run
+  remains for acceptance.**
 - **For M4 (recorded as an open question):** the sandbox account is a *Cash* account at options level "Covered And Cash
   Secured" — that tier may not permit buying long calls/puts. Verify (or raise the level / create a margin sandbox
   account at developer.tastytrade.com sandbox tools) before the M4 order path.

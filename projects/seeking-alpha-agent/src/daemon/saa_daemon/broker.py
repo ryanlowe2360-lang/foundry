@@ -46,6 +46,7 @@ class Brokerage:
     broker: Any = None          # tastytrade.Session (sandbox) or None
     data_info: SessionInfo = field(default_factory=lambda: SessionInfo("prod"))
     broker_info: SessionInfo = field(default_factory=lambda: SessionInfo("sandbox"))
+    _rest_forbidden: bool = False   # set after a 403 from /market-data (D15)
 
     async def open(self) -> "Brokerage":
         from tastytrade import Session  # imported here so the rest of the package is SDK-free
@@ -144,6 +145,8 @@ class Brokerage:
         items = body.get("data", {}).get("items") if isinstance(body, dict) else None
         if status // 100 != 2 or not isinstance(items, list):
             log.warning("market-data/by-type → HTTP %s: %s", status, str(body)[:200])
+            if status == 403:
+                self._note_rest_forbidden()
             return out
         for it in items:
             px = self._px(it)
@@ -162,7 +165,17 @@ class Brokerage:
                 out[s] = px
             else:
                 log.warning("market-data/%s/%s → HTTP %s: %s", kind, s, status, str(body)[:160])
+                if status == 403:
+                    self._note_rest_forbidden()
+                    break
+                if status == 429:
+                    break
         return out
+
+    def _note_rest_forbidden(self) -> None:
+        if not self._rest_forbidden:
+            self._rest_forbidden = True
+            log.warning("REST market data is not entitled on this OAuth app (403) — using DXLink for spots for the rest of this run")
 
     async def _spots_dxlink(self, symbols: list[str], window: float = 6.0) -> dict[str, float]:
         """Mid of the first DXLink quote per symbol — works whenever the streamer does (weekends included)."""
@@ -187,16 +200,23 @@ class Brokerage:
         return out
 
     async def spot_prices(self, symbols: list[str]) -> dict[str, float]:
-        """Spot per underlying: REST by-type → REST per symbol → DXLink quote mid. Each step only fills what the previous
-        one missed and logs its failure (status + body) instead of raising, so a chain plan is never lost to one bad call."""
+        """Spot per underlying: DXLink quote mid first (the entitlement that is known to work — REST market data returned
+        403 on Ryan's production OAuth app, D15), then REST by-type, then REST per symbol. Each step only fills what the
+        previous one missed and logs failures (status + body) instead of raising, so a chain plan is never lost to one bad
+        call. After a 403 from REST the REST steps are skipped for the rest of the process (avoids a 429 storm)."""
         if self.data is None or not symbols:
             return {}
         symbols = list(dict.fromkeys(s.upper() for s in symbols))
         out: dict[str, float] = {}
-        for name, fn in (("rest_by_type", self._spots_rest_by_type), ("rest_single", self._spots_rest_single), ("dxlink", self._spots_dxlink)):
+        steps = [("dxlink", self._spots_dxlink)]
+        if not self._rest_forbidden:
+            steps += [("rest_by_type", self._spots_rest_by_type), ("rest_single", self._spots_rest_single)]
+        for name, fn in steps:
             missing = [s for s in symbols if s not in out]
             if not missing:
                 break
+            if name.startswith("rest") and self._rest_forbidden:
+                continue
             try:
                 got = await fn(missing)
                 out.update(got)
@@ -206,7 +226,7 @@ class Brokerage:
                 log.warning("spots via %s failed: %s: %s", name, type(e).__name__, str(e)[:160])
         still = [s for s in symbols if s not in out]
         if still:
-            log.error("no spot price for %s after all three methods", " ".join(still))
+            log.error("no spot price for %s after all methods", " ".join(still))
         return out
 
     async def nested_chain(self, underlying: str) -> Any:

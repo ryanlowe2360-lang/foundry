@@ -80,7 +80,7 @@ async def test_feed_subscription_plan_is_chunked():
     assert candle[1] == ["QQQ", "SPY"] and candle[2] == "1m" and candle[3] == et_dt(D, time(9, 30)) and candle[4] is False
     option_calls = [c for c in st.calls if c[0] == "subscribe" and c[2] and c[2][0].startswith(".")]
     assert len(option_calls) == 3 * 4 and max(len(c[2]) for c in option_calls) == 150
-    assert {c[3] for c in option_calls if c[1] in ("Quote", "Greeks")} == {1.0} and {c[3] for c in option_calls if c[1] in ("Summary", "Trade")} == {5.0}
+    assert {c[3] for c in option_calls if c[1] in ("Quote", "Greeks")} == {2.0} and {c[3] for c in option_calls if c[1] in ("Summary", "Trade")} == {5.0}
     # add() before the socket is up queues the delta; nothing subscribed yet
     await feed.add(FeedPlan({"NVDA"}, {"NVDA"}, {".NVDA260928C180"}))
     assert feed._pending and feed._pending[0].underlyings == {"NVDA"}

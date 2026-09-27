@@ -57,28 +57,13 @@ def _brokerage(env_file: Path, tmp_path: Path, session) -> Brokerage:
 
 
 @pytest.mark.asyncio
-async def test_spot_chain_by_type_string_error_falls_back_to_single(env_file: Path, tmp_path: Path, caplog):
+async def test_spot_chain_dxlink_first_then_rest(env_file: Path, tmp_path: Path, caplog):
+    """DXLink is primary (the entitlement that works, D15); REST fills what DXLink missed; a string `error` body from
+    REST (what crashed the SDK parser) is logged, not raised."""
     routes = {
-        "/market-data/by-type": (400, {"error": "Bad Request: unsupported query"}),           # what killed the SDK parser
-        "/market-data/equity/SPY": (200, {"data": {"symbol": "SPY", "mark": "771.89", "last": "771.7"}}),
+        "/market-data/by-type": (400, {"error": "Bad Request: unsupported query"}),
         "/market-data/equity/QQQ": (200, {"data": {"symbol": "QQQ", "mark": None, "last": None, "mid": "580.10"}}),
         "/market-data/equity/IWM": (200, {"data": {"symbol": "IWM", "prev-close": "240.55"}}),
-    }
-    sess = _FakeSession(routes)
-    b = _brokerage(env_file, tmp_path, sess)
-    b._spots_dxlink = lambda syms, window=6.0: (_ for _ in ()).throw(AssertionError("dxlink should not be needed"))  # type: ignore[assignment]
-    with caplog.at_level(logging.WARNING, logger="saa.broker"):
-        out = await b.spot_prices(["SPY", "QQQ", "IWM"])
-    assert out == {"SPY": 771.89, "QQQ": 580.10, "IWM": 240.55}
-    assert any("market-data/by-type → HTTP 400" in r.getMessage() and "unsupported query" in r.getMessage() for r in caplog.records)
-    assert [c[0] for c in sess.calls][:1] == ["/market-data/by-type"] and len(sess.calls) == 4
-
-
-@pytest.mark.asyncio
-async def test_spot_chain_by_type_success_and_dxlink_last_resort(env_file: Path, tmp_path: Path):
-    routes = {
-        "/market-data/by-type": (200, {"data": {"items": [{"symbol": "SPY", "mark": "771.89"}, {"symbol": "QQQ", "mark": "NaN", "last": "580.2"}]}}),
-        "/market-data/equity/IWM": (500, "upstream timeout"),
     }
     sess = _FakeSession(routes)
     b = _brokerage(env_file, tmp_path, sess)
@@ -86,13 +71,43 @@ async def test_spot_chain_by_type_success_and_dxlink_last_resort(env_file: Path,
 
     async def fake_dx(syms, window=6.0):
         dx_calls.append(list(syms))
-        return {"IWM": 240.6}
+        return {"SPY": 771.89}                      # DXLink only answered SPY this time
 
     b._spots_dxlink = fake_dx  # type: ignore[assignment]
-    out = await b.spot_prices(["SPY", "QQQ", "IWM", "spy"])          # duplicate/lower-case input is normalised
-    assert out == {"SPY": 771.89, "QQQ": 580.2, "IWM": 240.6}
-    assert dx_calls == [["IWM"]]                                        # only the still-missing symbol went to DXLink
-    assert sess.calls[0][1] == {"equity": ["SPY", "QQQ", "IWM"]}       # by-type asked for all three, equities only
+    with caplog.at_level(logging.WARNING, logger="saa.broker"):
+        out = await b.spot_prices(["SPY", "QQQ", "IWM", "spy"])   # duplicate / lower-case input is normalised
+    assert out == {"SPY": 771.89, "QQQ": 580.10, "IWM": 240.55}
+    assert dx_calls == [["SPY", "QQQ", "IWM"]]
+    assert sess.calls[0] == ("/market-data/by-type", {"equity": ["QQQ", "IWM"]})   # REST asked only for the missing two
+    assert any("market-data/by-type → HTTP 400" in r.getMessage() and "unsupported query" in r.getMessage() for r in caplog.records)
+    assert b._rest_forbidden is False
+
+
+@pytest.mark.asyncio
+async def test_spot_chain_rest_403_is_remembered(env_file: Path, tmp_path: Path, caplog):
+    """Ryan's smoke run: /market-data/* → 403 Forbidden (app not entitled), then a 429 from retrying per symbol. After the
+    first 403 the REST steps are skipped for the rest of the process."""
+    routes = {
+        "/market-data/by-type": (403, {"timestamp": "2026-09-27T22:19:44.881Z", "status": 403, "error": "Forbidden", "path": "/market-data/by-type"}),
+        "/market-data/equity/IWM": (403, {"status": 403, "error": "Forbidden"}),
+    }
+    sess = _FakeSession(routes)
+    b = _brokerage(env_file, tmp_path, sess)
+    answers = [{"SPY": 771.89, "QQQ": 745.3}, {"SPY": 771.9, "QQQ": 745.4, "IWM": 282.2}]
+
+    async def fake_dx(syms, window=6.0):
+        return {k: v for k, v in answers.pop(0).items() if k in syms}
+
+    b._spots_dxlink = fake_dx  # type: ignore[assignment]
+    with caplog.at_level(logging.WARNING, logger="saa.broker"):
+        out = await b.spot_prices(["SPY", "QQQ", "IWM"])
+    assert out == {"SPY": 771.89, "QQQ": 745.3}                     # IWM missing this round: REST tried, forbidden
+    assert b._rest_forbidden is True
+    assert [c[0] for c in sess.calls] == ["/market-data/by-type"]  # per-symbol REST not attempted after the 403
+    assert any("not entitled" in r.getMessage() for r in caplog.records)
+    n = len(sess.calls)
+    out = await b.spot_prices(["SPY", "QQQ", "IWM"])                # second round: DXLink only, no REST calls at all
+    assert out == {"SPY": 771.9, "QQQ": 745.4, "IWM": 282.2} and len(sess.calls) == n
 
 
 @pytest.mark.asyncio
@@ -107,7 +122,7 @@ async def test_spot_chain_everything_fails_is_empty_not_exception(env_file: Path
     with caplog.at_level(logging.WARNING, logger="saa.broker"):
         out = await b.spot_prices(["SPY"])
     assert out == {}
-    assert any("no spot price for SPY after all three methods" in r.getMessage() for r in caplog.records)
+    assert any("no spot price for SPY after all methods" in r.getMessage() for r in caplog.records)
 
 
 def test_px_parsing():

@@ -150,8 +150,8 @@ class DXLinkFeed:
             opts = sorted(plan.options)
             for i in range(0, len(opts), OPTION_CHUNK):
                 chunk = opts[i:i + OPTION_CHUNK]
-                await st.subscribe(Quote, chunk, refresh_interval=1.0)
-                await st.subscribe(Greeks, chunk, refresh_interval=1.0)
+                await st.subscribe(Quote, chunk, refresh_interval=2.0)
+                await st.subscribe(Greeks, chunk, refresh_interval=2.0)
                 await st.subscribe(Summary, chunk, refresh_interval=5.0)
                 await st.subscribe(Trade, chunk, refresh_interval=5.0)
                 await asyncio.sleep(0.05)
