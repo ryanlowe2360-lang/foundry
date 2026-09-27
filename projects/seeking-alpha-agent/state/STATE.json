@@ -5,7 +5,7 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-09-26T22:46:47Z",
+  "last_touched": "2026-09-27T16:53:06Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
@@ -18,7 +18,7 @@
     {
       "id": 2,
       "name": "Daemon core: data plane (plan M2 part 1)",
-      "status": "todo",
+      "status": "in-progress",
       "acceptance": "Full sandbox session run logs heartbeat, >=380 1-min bars per index symbol, chain snapshots every 5 min, zero unhandled exceptions; pytest green; saa.run_log shows the run."
     },
     {
@@ -47,10 +47,10 @@
     }
   ],
   "current_milestone": 2,
-  "next_action": "Start milestone 2 (daemon data plane) in an interactive 'M2 build' chat with the Seeking Alpha Agent folder linked: scaffold src/daemon/ (Python 3.11, asyncio, tastytrade SDK) \u2014 OAuth refresh-token login against the sandbox using TT_SANDBOX_* from .env, DXLink quote/greeks stream + 1-min bars for SPY/QQQ/IWM, option-chain snapshots every 5 min, SQLite hot state, 9:25 heartbeat + 4:20 tally to Telegram via saa.outbox; verify with a full sandbox session run (>=380 bars/symbol, zero unhandled exceptions) and pytest src/tests/ green. Before that, on any day: read saa.v_daily_records to confirm the M1 gate is progressing.",
+  "next_action": "Close M2 (daemon data plane): code is complete, simulated and delivered to Desktop/Seeking Alpha Agent /agent/daemon (v0.2.0). Ryan: paste the Supabase service_role key into the empty SUPABASE_SERVICE_ROLE_KEY line of .env, run `./run.sh smoke` from agent/daemon (expect PASS on every line; dxlink WARN is fine when the market is closed), then on a trading day run `./run.sh session` before 9:20 AM ET with the Mac awake. Next Claude session: read the pasted smoke output + EOD Telegram report, confirm in Supabase `select * from saa.run_log where job = 'daemon:session' order by ts desc limit 1` and `select * from saa.daemon_runs order by started_at desc limit 1` that bars.complete >= 380 for SPY/QQQ/IWM, snapshots per underlying == snapshots_expected (80), unhandled == 0; if so mark milestone 2 done (foundry.py touch --milestone 2 --milestone-status done --current-milestone 3) and start M3 (rules engine + Kelly) in src/daemon/saa_daemon/engine/; if a step failed, fix from the smoke/EOD text (src/daemon/saa_daemon/{broker,feed,mirror}.py) and re-run smoke. Verify with: pytest src/tests -q (28 green) + the run_log row.",
   "blockers": [],
   "open_questions": [],
-  "sessions": 2,
+  "sessions": 3,
   "tags": [
     "trading",
     "options",

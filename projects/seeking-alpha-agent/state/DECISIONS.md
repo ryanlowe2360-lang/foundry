@@ -3,6 +3,58 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D14 (2026-09-27) — `saa.v_daily_records` shows only dates ≤ today (migration 0006)
+
+- **Context:** the hand-maintained econ calendar (D13 scope) puts 26 future rows into `saa.calendar_days`; the
+  market-data function already pre-fetches the next trading day. The Friday review counts the M1 record streak as
+  "consecutive `complete` days from the most recent" over `select * from saa.v_daily_records limit 20`, which future
+  rows would read as incomplete days.
+- **Chose:** filter the view to `trade_date <= saa.et(now())::date` and weekdays. Same columns; no prompt changes.
+- **Revisit if:** a report needs the forward calendar — read `saa.calendar_days` directly.
+
+## D13 (2026-09-27) — Daemon writes to Supabase through the `public.saa_*` RPC surface with the service-role key from `.env`
+
+- **Context:** the daemon runs on Ryan's Mac (M2–M4) and must mirror into `saa.*` and enqueue Telegram messages through
+  `saa.outbox`. PostgREST does not expose the `saa` schema; the M1 pattern is RPCs in `public` locked to `service_role`.
+- **Options:** (a) service-role key in `.env`, RPC only (this); (b) a dedicated edge function with a shared secret;
+  (c) direct Postgres connection string in `.env`.
+- **Chose:** (a). Seven new RPCs in migration 0005 (`saa_bars_upsert`, `saa_chain_snapshot`, `saa_halts_upsert`,
+  `saa_daemon_run`, `saa_calendar_day`, `saa_econ_upsert`, `saa_daemon_status`), all `security definer`, `search_path`
+  pinned, execute granted to `service_role` only; new tables `saa.bars_1m`, `saa.chain_snapshots`, `saa.halts`,
+  `saa.daemon_runs` (RLS on, no policies). Retention added to the daily housekeeping cron (bars 120 d, snapshots 45 d,
+  halts/runs 180 d). Ryan pastes the key himself; it never passes through chat. Every mirror write is an idempotent
+  upsert so a network outage is a delay, never a loss (SQLite `mirrored` flags + a durable RPC queue).
+- **Revisit if:** the VPS (M5) should get a narrower credential — then a dedicated Postgres role or an ingest edge function.
+
+## D12 (2026-09-27) — Daemon universe and snapshot shape
+
+- **Context:** the spec names SPY/QQQ/XSP + the day's watch list; `saa.settings.index_symbols` (set at intake and used by
+  the M1 poller and brief) says SPY,QQQ,IWM. Chain snapshots for many names every 5 minutes could outgrow the free tier.
+- **Chose:** the daemon reads `saa.settings.index_symbols` as the single source of truth (`SAA_INDEX_SYMBOLS` in `.env`
+  overrides; XSP is a one-line setting change, the code already treats it as a Cboe index for REST spots). Single names
+  come from `saa_active_symbols()` (brief watch list, today's triggers, open shadow trades, non-stand-down checklists),
+  re-read every 5 minutes, capped at 25 (`SAA_MAX_SINGLE_NAMES`). Strike windows: indices ±3 %, 2 nearest expirations
+  (0DTE + next); names ±8 %, 1 expiration; ≤20 strikes per side; option symbols subscribed in chunks of 150. Snapshot rows
+  are compact 15-column arrays (≈3 KB per index snapshot) with a summary (ATM IV, OI/volume totals, put/call ratios,
+  coverage) and the OI-based dealer-gamma proxy (dollar gamma per 1 % move, calls +, puts −, flip level, call/put walls,
+  regime, coverage) — recorded for the ledger to measure, not used as a rule (synthesis §8). Recording keeps
+  underlying-level events only (option state is captured by the snapshots).
+- **Revisit if:** M3 needs full option-quote replay (record option events too, ~300 MB/day) or the brief wants more names.
+
+## D11 (2026-09-27) — Market data from production OAuth; the sandbox is the account only; Telegram via outbox with a direct fallback
+
+- **Context:** the tastytrade sandbox has no market data (recorded 2026-09-26) and the SDK's streamer requires a
+  production session. The spec's "OAuth (sandbox first)" is honoured for the *account*; quotes have to come from
+  production.
+- **Chose:** two sessions in the daemon: `data` = production (`TT_PROD_*`, read-only: DXLink quote token, nested option
+  chains, REST market data) and `broker` = sandbox (`TT_SANDBOX_*`, read in M2, orders in M4). `SAA_BROKER_ENV` is
+  hard-fixed to `sandbox` until M5 and there is no order code in the package. Heartbeat / EOD report go through
+  `saa_enqueue` → `saa.outbox` → the existing insert trigger → `telegram-send` (spec path); if Supabase is unreachable
+  the daemon sends the same text through the Bot API directly from the Mac (`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`
+  from `.env`) and logs that it did; if both fail the enqueue is queued durably and retried.
+- **Revisit if:** tastytrade opens sandbox market data (then `SAA_DATA_ENV=sandbox` is one line) or the outbox path
+  proves reliable enough that the fallback is noise.
+
 ## D10 (2026-09-27) — Trigger feed for M1–M2 stays TradingView alerts; universe = SA Quant watchlist + SPY/QQQ/IWM
 
 - **Context:** Ryan raised the weaknesses of per-symbol TradingView alerts (setup chore, alerts bound to the

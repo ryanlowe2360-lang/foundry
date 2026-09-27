@@ -1,0 +1,27 @@
+# systemd unit for the VPS (M5+). Layout on the server: /opt/saa/.env and /opt/saa/agent/daemon/ (this folder).
+#   sudo useradd -r -m -d /opt/saa saa && sudo chown -R saa:saa /opt/saa
+#   sudo cp /opt/saa/agent/daemon/deploy/saa-daemon.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now saa-daemon
+#   journalctl -u saa-daemon -f
+# `forever` mode sleeps until 09:15 ET on the next trading day, runs the session, and repeats.
+[Unit]
+Description=Seeking Alpha Agent trading daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=saa
+WorkingDirectory=/opt/saa/agent/daemon
+Environment=TZ=America/New_York
+Environment=SAA_ENV_FILE=/opt/saa/.env
+ExecStart=/bin/bash /opt/saa/agent/daemon/run.sh forever
+Restart=always
+RestartSec=30
+# the daemon writes only under state/; the .env is read-only for it
+ReadWritePaths=/opt/saa/agent/daemon/state
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

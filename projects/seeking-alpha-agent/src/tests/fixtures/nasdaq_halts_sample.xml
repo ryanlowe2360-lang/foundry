@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:ndaq="http://www.nasdaqtrader.com/">
+  <channel>
+    <title>Trade Halts</title>
+    <link>https://www.nasdaqtrader.com/trader.aspx?id=TradeHalts</link>
+    <description>Current Trade Halts</description>
+    <item>
+      <title>ABCD</title>
+      <pubDate>Mon, 28 Sep 2026 09:45:12 -0400</pubDate>
+      <ndaq:HaltDate>09/28/2026</ndaq:HaltDate>
+      <ndaq:HaltTime>09:45:12</ndaq:HaltTime>
+      <ndaq:IssueSymbol>ABCD</ndaq:IssueSymbol>
+      <ndaq:IssueName>ABCD Corp Common Stock</ndaq:IssueName>
+      <ndaq:Market>NASDAQ</ndaq:Market>
+      <ndaq:ReasonCode>LUDP</ndaq:ReasonCode>
+      <ndaq:PauseThresholdPrice>12.34</ndaq:PauseThresholdPrice>
+      <ndaq:ResumptionDate>09/28/2026</ndaq:ResumptionDate>
+      <ndaq:ResumptionQuoteTime>09:50:12</ndaq:ResumptionQuoteTime>
+      <ndaq:ResumptionTradeTime>09:55:12</ndaq:ResumptionTradeTime>
+    </item>
+    <item>
+      <title>EFGH</title>
+      <pubDate>Mon, 28 Sep 2026 14:02:00 -0400</pubDate>
+      <ndaq:HaltDate>09/28/2026</ndaq:HaltDate>
+      <ndaq:HaltTime>14:02:00</ndaq:HaltTime>
+      <ndaq:IssueSymbol>EFGH</ndaq:IssueSymbol>
+      <ndaq:IssueName>EFGH Holdings Inc. Class A</ndaq:IssueName>
+      <ndaq:Market>NYSE</ndaq:Market>
+      <ndaq:ReasonCode>T1</ndaq:ReasonCode>
+      <ndaq:PauseThresholdPrice></ndaq:PauseThresholdPrice>
+      <ndaq:ResumptionDate></ndaq:ResumptionDate>
+      <ndaq:ResumptionQuoteTime></ndaq:ResumptionQuoteTime>
+      <ndaq:ResumptionTradeTime></ndaq:ResumptionTradeTime>
+    </item>
+    <item>
+      <title>malformed</title>
+      <ndaq:IssueSymbol></ndaq:IssueSymbol>
+      <ndaq:HaltDate>09/28/2026</ndaq:HaltDate>
+    </item>
+  </channel>
+</rss>

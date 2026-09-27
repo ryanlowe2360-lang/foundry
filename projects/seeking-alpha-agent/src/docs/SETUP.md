@@ -94,7 +94,42 @@ directional evidence only — real option marks arrive with the broker feed in M
 If a run is missing: `/status` shows counts; the build log for this milestone lists where each
 piece logs (`saa.run_log`).
 
-## 5. Still in `.env` (not needed until M2/M5)
+## 5. M2 — the daemon on your Mac (10 minutes, then one command per trading day)
 
-`TT_SANDBOX_*` (M2), `TT_PROD_*` (M5), `ANTHROPIC_API_KEY` (M2 daemon). Leave them in the
-`.env` in the Seeking Alpha Agent folder; the daemon build reads them from there.
+The daemon (`agent/daemon/`) is the process that will place the trades in M4+. In M2 it streams the
+data plane and **places no orders**. It reads the same `.env`.
+
+1. **Two more lines in `.env`** (already added as placeholders at the bottom of the file):
+   `SUPABASE_URL=https://zspbkcheounkwnpjkgrv.supabase.co` (filled in) and
+   `SUPABASE_SERVICE_ROLE_KEY=` → paste the key from Supabase → project **Quant edge** →
+   **Project Settings** → **API Keys** → `service_role` (secret; it lets the daemon write to the `saa`
+   schema; never share it or paste it into chat). Save.
+2. **Smoke test** (any day, ~30 s; first run builds a Python virtualenv, ~1 min):
+   ```bash
+   cd "$HOME/Desktop/Seeking Alpha Agent /agent/daemon"
+   ./run.sh smoke
+   ```
+   Every line should say PASS (WARN on `dxlink` is normal when the market is closed). You get one
+   short Telegram message from @SeekingABot — that is the outbox path working from the daemon.
+   If Python 3.11+ is missing: `brew install python@3.12`, then run it again.
+3. **Session run** (a weekday; start any time before 9:20 AM ET, leave the Mac awake, lid open or
+   "Prevent automatic sleeping" on):
+   ```bash
+   cd "$HOME/Desktop/Seeking Alpha Agent /agent/daemon"
+   ./run.sh session
+   ```
+   9:25 heartbeat and 4:20 EOD data report arrive on Telegram; the process exits at 4:25. Paste the
+   EOD report into the next build chat — it is the M2 acceptance evidence (≥380 bars per index symbol,
+   a snapshot per active symbol every 5 minutes, zero unhandled exceptions), and `saa.run_log`
+   `daemon:session` carries the same numbers.
+4. Optional: let launchd start it at 9:10 every weekday — instructions in the header of
+   `agent/daemon/deploy/com.saa.daemon.plist`. It only helps while the Mac is awake; the VPS (M5) is
+   what removes that dependency.
+
+`./run.sh check` prints readiness by key name (never a value). Logs and the SQLite state live under
+`agent/daemon/state/`. `agent/daemon/README.md` explains everything the daemon writes.
+
+## 6. Still in `.env` (not needed until later)
+
+`ANTHROPIC_API_KEY` (M3 — daemon judgment calls). `TT_PROD_*` is used from M2 on for **market data
+only** (read-only); live orders on the production account are M5.

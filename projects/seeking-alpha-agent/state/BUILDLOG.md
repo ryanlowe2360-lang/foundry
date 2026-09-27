@@ -2,6 +2,69 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-09-27 — session 4 ("M2 build": daemon data plane built and simulated; live run is Ryan's)
+
+- **Ruling applied:** Ryan waived the 10-day M1 record streak for M2's *data plane* (it stays the gate for M3 sizing).
+- **Did:**
+  - Migration `0005_daemon_mirror.sql` applied to Quant edge: tables `saa.bars_1m`, `saa.chain_snapshots`, `saa.halts`,
+    `saa.daemon_runs` (RLS on, service role only) + RPCs `saa_bars_upsert`, `saa_chain_snapshot`, `saa_halts_upsert`,
+    `saa_daemon_run` (also bumps `saa.settings.daemon_last_seen`), `saa_calendar_day`, `saa_econ_upsert`,
+    `saa_daemon_status`; housekeeping cron extended with retention (D13). Migration `0006` filters `saa.v_daily_records`
+    to dates ≤ today (D14).
+  - Python 3.11 daemon `src/daemon/` (package `saa_daemon` v0.2.0, 21 modules, no order code): `.env` loader with
+    `Secret` wrappers + log redaction; ET clock/schedule with the NYSE 2026–27 calendar and a virtual `FakeClock`;
+    tastytrade sessions (production data + sandbox account, D11); DXLink feed (underlying Quote/Trade/Summary/Profile,
+    1-minute Candles from 09:30, option Quote/Greeks/Summary/Trade in chunks of 150; reconnect via supervisor; JSONL
+    recorder); bar book (forming-bar upserts, completion, gaps); chain planner + option book + compact 5-minute
+    snapshots + OI-based dealer-gamma proxy (D12); Cboe VIX term (same CDN endpoint as M1) every 5 min; Nasdaq halts
+    RSS every 60 s + DXLink Profile halts; SQLite hot state with `mirrored` flags and a durable RPC queue; Supabase
+    mirror every 10 s; 60-second machine heartbeat (`saa_daemon_run`); 9:25 Telegram heartbeat + 16:20 EOD data report
+    through `saa.outbox` with a direct Bot-API fallback; `saa.run_log` rows `daemon:start` / `daemon:heartbeat` /
+    `daemon:session`. CLI: `check`, `smoke`, `session [--date] [--force]`, `forever`, `replay`, `load-econ`. `run.sh`
+    bootstraps a venv (Python 3.11+ gate). `deploy/com.saa.daemon.plist` (launchd 09:10 weekdays) and
+    `deploy/saa-daemon.service` (systemd, `forever`) for M5.
+  - Hand-maintained econ calendar `src/data/econ_calendar.{json,md}`: FOMC 2026–2027 (federalreserve.gov), CPI and
+    Employment Situation through Dec 2026 (bls.gov; 2027 schedules publish in December) — 26 events merged into
+    `saa.calendar_days.econ` via `saa_econ_upsert` (open question from M1 closed).
+  - Delivered to the Mac: `Desktop/Seeking Alpha Agent /agent/daemon/` (30 files, checksums match the Foundry copy),
+    `agent/SETUP.md` (new §5 M2 steps, §6), `.env` gained `SUPABASE_URL` (filled) and an empty
+    `SUPABASE_SERVICE_ROLE_KEY` line for Ryan to paste (never through chat).
+- **Verified (evidence):**
+  - `python3 -m pytest src/tests -q` → **28 passed** (5 M1 shadow-model + 23 daemon). `test_daemon_session_sim.py` runs a
+    full trading day through the real `Daemon.run_session()` on a virtual clock with fake broker / feed / PostgREST /
+    Cboe / Nasdaq: **390/390 complete 1-minute bars for SPY, QQQ, IWM (+2 names), 80 chain snapshots per underlying
+    (09:25 baseline + every 5 min 09:30–16:00), a forced websocket drop at 11:00 caught by the supervisor and recovered
+    (`errors == {'feed': 1}`, reconnects 1, replayed candles upserted idempotently), heartbeat + EOD report both via
+    `saa_enqueue`, 3 `saa_log_run` rows (start/heartbeat/session, `p_ok` true, `unhandled` 0), 427 `saa_daemon_run`
+    pulses, run row `done`, mirror queue drained, `unhandled == 0`, no secret value in any RPC body or log.**
+    Simulated heartbeat / EOD texts: 8 and 9 lines, e.g. "Bars (1m): IWM 390/390 · NVDA 390/390 · QQQ 390/390 · SPY
+    390/390 · TSLA 390/390", "Chains: 80 snapshots × 5 underlyings (expected 80) · 572 option symbols",
+    "Feed: 126,702 events · 1 reconnects · errors caught: feed 1".
+  - `test_daemon_sdk_bridge.py` builds real `tastytrade.dxfeed` 13.2.3 events (camelCase aliases) and checks every field
+    the daemon reads; subscription chunking (320 options → 3 chunks × 4 event types, refresh intervals 1 s / 5 s);
+    recorder → `replay_bars` round trip deterministic.
+  - Live RPC exercise through the Supabase connector: `saa_bars_upsert` 2 rows then 1 update (complete flag sticks),
+    `saa_chain_snapshot` id 1 with gamma/summary readable, `saa_halts_upsert` insert + resumption update,
+    `saa_daemon_run` start → done patch with stats, `saa_econ_upsert` dedupe (2 in → 1 merged), `saa_calendar_day`,
+    `saa_daemon_status`; grants = `postgres, service_role` only; `saa_housekeeping` rescheduled. Test rows deleted.
+    After 0006: `select count(*) from saa.v_daily_records` = 0 on Sunday (Monday's pre-fetched row correctly hidden).
+  - `./run.sh` from a fresh copy: venv built with Python 3.13 in 14 s; `check` prints every setting with secrets as
+    `<secret len=N>`; `smoke --no-telegram` against a dummy `.env` in the cloud container degrades to clean FAIL rows
+    (`ProxyError: 403` — this container cannot reach tastytrade/Supabase/Cboe/Nasdaq) with exit 1 and no secret in
+    `state/logs`. On the linked VM (Python 3.10) `run.sh` refuses with the brew hint, and `.env` discovery walks up to
+    the Seeking Alpha Agent folder.
+- **Not yet verified (needs Ryan's Terminal — the linked shell cannot reach tastytrade):** the real sandbox session run.
+  M2 acceptance therefore stays open: (1) `./run.sh smoke` (any day) — sandbox login, production login + DXLink token,
+  SPY chain, a live quote, VIX, halts, Supabase write, Telegram; (2) `./run.sh session` on a trading day → EOD report
+  with ≥380 bars per index symbol, one snapshot per active symbol per 5 min, 0 unhandled; `saa.run_log`
+  `daemon:session` + `saa.daemon_runs` carry the same numbers. Then mark milestone 2 done.
+- **Stopped at:** M2 code complete, tested in simulation, delivered; waiting on the service-role key and Ryan's smoke +
+  session runs. Resume point in `next_action`.
+- **Lessons:** the cloud container and the linked-Mac VM both block tastytrade, so anything that needs the broker is a
+  one-line Terminal command for Ryan with the evidence coming back as a Telegram/`run_log` row — design the daemon so
+  its own report *is* the acceptance evidence. Future rows in `calendar_days` silently corrupt "streak" queries that
+  `limit N` a desc-ordered view — filter views to today.
+
 ## 2026-09-26 — session 3 (keys check, telegram-send v2)
 
 - **Did:** Ryan reported "all keys added" — they went into the `.env` on his Mac (nine values, checked by

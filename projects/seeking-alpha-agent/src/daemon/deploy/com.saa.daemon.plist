@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- launchd agent: start the Seeking Alpha Agent daemon session at 09:10 ET on weekdays (Mac must be awake).
+     Install:   cp "/Users/ryan/Desktop/Seeking Alpha Agent /agent/daemon/deploy/com.saa.daemon.plist" ~/Library/LaunchAgents/
+                launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.saa.daemon.plist
+     Remove:    launchctl bootout gui/$(id -u)/com.saa.daemon
+     Run now:   launchctl kickstart -k gui/$(id -u)/com.saa.daemon
+     The daemon exits on its own at 16:25 ET; launchd starts it again the next weekday. Logs: agent/daemon/state/logs/ -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.saa.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/ryan/Desktop/Seeking Alpha Agent /agent/daemon/run.sh</string>
+    <string>session</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/ryan/Desktop/Seeking Alpha Agent /agent/daemon</string>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>10</integer></dict>
+  </array>
+  <key>StandardOutPath</key><string>/Users/ryan/Desktop/Seeking Alpha Agent /agent/daemon/state/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/ryan/Desktop/Seeking Alpha Agent /agent/daemon/state/logs/launchd.err.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>TZ</key><string>America/New_York</string>
+  </dict>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>

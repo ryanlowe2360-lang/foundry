@@ -8,3 +8,8 @@ build/
 .env.*
 *.log
 .playwright/
+
+# Seeking Alpha Agent daemon runtime state (SQLite, recordings, logs, venv)
+projects/*/src/daemon/state/
+projects/*/src/daemon/.venv/
+.pytest_cache/

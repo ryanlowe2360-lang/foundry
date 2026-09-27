@@ -1,0 +1,3 @@
+# Seeking Alpha Agent daemon — runtime dependencies (Python 3.11+).
+# tastytrade pulls in httpx2[ws], anyio, pydantic and pandas-market-calendars.
+tastytrade>=13.2,<14
