@@ -3,6 +3,17 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D9 (2026-09-27) — Goal 2 (Trading) in the Goals ledger: KILL — final (supersedes D8 and D3)
+
+- **Context:** Ryan asked for a plain explanation of Goal 2 and whether it was part of this build. It is not:
+  it is a separate personal-ledger goal (≤5 hr/wk cap, journal streak, quarterly P&L) whose only overlap
+  with this project was the friction rule on trading-tool builds.
+- **Chose:** KILL (Ryan, 2026-09-27 11:45 ET). Logged in `Desktop/Goals/02-Trading/GOAL.md` (status KILLED,
+  log entry) and `GOALS.md` (row removed from active goals; "Killed" section added). Trading is scored
+  only by this project's own gates from here on; nothing in the build changes.
+- **Revisit if:** Ryan wants a personal time budget for trading again — that would be a new ledger goal,
+  not a reopening of this one.
+
 ## D8 (2026-09-26) — Goal 2 (Trading) ruling revised to REVISE, keep (supersedes D3)
 
 - **Context:** After the intake (D3 = KILL), Ryan ruled REVISE in a later setup session the same day, per
