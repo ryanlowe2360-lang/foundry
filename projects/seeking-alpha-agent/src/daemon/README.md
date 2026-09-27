@@ -33,7 +33,7 @@ Scheduled: `deploy/com.saa.daemon.plist` (launchd, 09:10 ET weekdays — the Mac
 | `TT_PROD_CLIENT_ID` / `TT_PROD_CLIENT_SECRET` / `TT_PROD_REFRESH_TOKEN` | **market data** (DXLink, chains, REST quotes) — read-only | yes |
 | `TT_SANDBOX_CLIENT_ID` / `TT_SANDBOX_CLIENT_SECRET` / `TT_SANDBOX_REFRESH_TOKEN` | the paper account (M4 orders); M2 only reads it | yes |
 | `SUPABASE_URL` | `https://zspbkcheounkwnpjkgrv.supabase.co` | yes (mirror) |
-| `SUPABASE_SERVICE_ROLE_KEY` | writes to `saa.*` through the `public.saa_*` RPCs | yes (mirror) |
+| `SUPABASE_SERVICE_ROLE_KEY` (or `SUPABASE_SECRET_KEY`) | writes to `saa.*` through the `public.saa_*` RPCs — a new `sb_secret_…` key (sent on `apikey` only) or the legacy `service_role` JWT (sent on `apikey` + Bearer) | yes (mirror) |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | **fallback** delivery only; the primary path is `saa.outbox` | optional |
 | `SAA_DATA_ENV` | `prod` (default) or `sandbox` — the sandbox has no market data (D11) | optional |
 | `SAA_INDEX_SYMBOLS` | overrides `saa.settings.index_symbols` (default SPY,QQQ,IWM) | optional |

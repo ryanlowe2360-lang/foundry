@@ -100,10 +100,13 @@ The daemon (`agent/daemon/`) is the process that will place the trades in M4+. I
 data plane and **places no orders**. It reads the same `.env`.
 
 1. **Two more lines in `.env`** (already added as placeholders at the bottom of the file):
-   `SUPABASE_URL=https://zspbkcheounkwnpjkgrv.supabase.co` (filled in) and
-   `SUPABASE_SERVICE_ROLE_KEY=` → paste the key from Supabase → project **Quant edge** →
-   **Project Settings** → **API Keys** → `service_role` (secret; it lets the daemon write to the `saa`
-   schema; never share it or paste it into chat). Save.
+   `SUPABASE_URL=https://zspbkcheounkwnpjkgrv.supabase.co` (filled in) and `SUPABASE_SERVICE_ROLE_KEY=` → paste **one**
+   key from Supabase → project **Quant edge** → **Project Settings** (gear, bottom left) → **API Keys**. The page shows
+   two key families and either works here: the **secret key** (`sb_secret_…`, under *Publishable and secret API keys* —
+   click *Create new API key* if none exists, name it `saa-daemon`) or the legacy **`service_role`** key (`eyJ…`, under
+   *Legacy API keys*, click *Reveal*). Do **not** use `anon` or `sb_publishable_…` — those cannot write to `saa`. The
+   key lets the daemon write bars, snapshots and heartbeats into the `saa` schema; never share it or paste it into chat.
+   Save the file.
 2. **Smoke test** (any day, ~30 s; first run builds a Python virtualenv, ~1 min):
    ```bash
    cd "$HOME/Desktop/Seeking Alpha Agent /agent/daemon"

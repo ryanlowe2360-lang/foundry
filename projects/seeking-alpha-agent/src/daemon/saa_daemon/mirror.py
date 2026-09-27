@@ -36,8 +36,13 @@ class SupabaseMirror:
 
     # ---------------------------------------------------------------- transport
     def _headers(self) -> dict[str, str]:
+        """Both Supabase key styles work: a legacy `service_role` JWT (eyJ…) goes on `apikey` + `Authorization: Bearer`;
+        a new secret key (`sb_secret_…`) is not a JWT and must go on `apikey` only (a Bearer copy would fail JWT checks)."""
         key = self.settings.supabase_key.value
-        return {"apikey": key, "Authorization": f"Bearer {key}", "Accept": "application/json", "Prefer": "return=representation"}
+        h = {"apikey": key, "Accept": "application/json", "Prefer": "return=representation"}
+        if not key.startswith("sb_"):
+            h["Authorization"] = f"Bearer {key}"
+        return h
 
     async def rpc(self, fn: str, args: dict[str, Any] | None = None, *, timeout: float = 20.0) -> Any:
         """Call public.<fn>(args). Raises MirrorError on any failure (message never contains the key)."""

@@ -316,7 +316,11 @@ class FakeHttp:
             raise ConnectionError("network down")
         if "/rest/v1/rpc/" in url:
             fn = url.rsplit("/", 1)[-1]
-            assert headers and headers["apikey"] == headers["Authorization"].removeprefix("Bearer ")
+            assert headers and headers["apikey"]
+            if headers["apikey"].startswith("sb_"):
+                assert "Authorization" not in headers          # new secret keys: apikey only (not a JWT)
+            else:
+                assert headers["apikey"] == headers["Authorization"].removeprefix("Bearer ")
             self.calls.append((fn, body))
             if fn in self.fail:
                 return 500, {"message": f"{fn} exploded"}
@@ -451,3 +455,14 @@ def test_report_texts_have_shape():
     assert "0 unhandled exceptions" in eod and "SPY 390/390" in eod and "IWM 389/390 (gap 12:07)" in eod
     assert "80 snapshots × 2 underlyings (expected 80)" in eod and "1,234,567 events · 1 reconnects · errors caught: feed 1" in eod
     assert "Halts: 1 (ABCD 09:45 LUDP)" in eod and "Telegram: system via outbox" in eod
+
+
+def test_mirror_headers_for_both_key_styles(env_file: Path, tmp_path: Path):
+    legacy = config.load_settings(env_file, environ={"SUPABASE_SERVICE_ROLE_KEY": "eyJhbGciOiJIUzI1NiJ9.legacy.jwt"}, state_dir=tmp_path)
+    h = SupabaseMirror(legacy, Store(tmp_path / "h1.sqlite"), FakeHttp())._headers()
+    assert h["apikey"] == "eyJhbGciOiJIUzI1NiJ9.legacy.jwt" and h["Authorization"] == "Bearer eyJhbGciOiJIUzI1NiJ9.legacy.jwt"
+    new = config.load_settings(env_file, environ={"SUPABASE_SERVICE_ROLE_KEY": "sb_secret_abcdefghijklmnop"}, state_dir=tmp_path)
+    h = SupabaseMirror(new, Store(tmp_path / "h2.sqlite"), FakeHttp())._headers()
+    assert h["apikey"] == "sb_secret_abcdefghijklmnop" and "Authorization" not in h
+    alt = config.load_settings(env_file, environ={"SUPABASE_SERVICE_ROLE_KEY": "", "SUPABASE_SECRET_KEY": "sb_secret_zzzzzzzzzzzzzzzz"}, state_dir=tmp_path)
+    assert alt.supabase_key.value == "sb_secret_zzzzzzzzzzzzzzzz"     # either variable name is accepted

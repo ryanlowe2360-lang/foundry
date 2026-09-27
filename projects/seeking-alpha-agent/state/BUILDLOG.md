@@ -53,6 +53,11 @@ Append-only. Newest entry on top. Every session that touches this project adds o
     (`ProxyError: 403` — this container cannot reach tastytrade/Supabase/Cboe/Nasdaq) with exit 1 and no secret in
     `state/logs`. On the linked VM (Python 3.10) `run.sh` refuses with the brew hint, and `.env` discovery walks up to
     the Seeking Alpha Agent folder.
+- **Follow-up (17:30 ET):** Ryan asked which key. Supabase now has two key families (legacy `service_role` JWT vs new
+  `sb_secret_…`; the latter must be sent on `apikey` only — a Bearer copy fails JWT verification). `mirror._headers()`
+  now handles both (test `test_mirror_headers_for_both_key_styles`; suite 29 green); SETUP.md §5 and README name both
+  keys and where they are (Project Settings → API Keys). `mirror.py`, README, SETUP.md redeployed to the Mac (checksums
+  match).
 - **Not yet verified (needs Ryan's Terminal — the linked shell cannot reach tastytrade):** the real sandbox session run.
   M2 acceptance therefore stays open: (1) `./run.sh smoke` (any day) — sandbox login, production login + DXLink token,
   SPY chain, a live quote, VIX, halts, Supabase write, Telegram; (2) `./run.sh session` on a trading day → EOD report
