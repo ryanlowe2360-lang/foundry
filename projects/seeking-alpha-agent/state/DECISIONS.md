@@ -3,6 +3,20 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D10 (2026-09-27) — Trigger feed for M1–M2 stays TradingView alerts; universe = SA Quant watchlist + SPY/QQQ/IWM
+
+- **Context:** Ryan raised the weaknesses of per-symbol TradingView alerts (setup chore, alerts bound to the
+  script version, universe doesn't follow the brief). Claude offered an Alpaca free-bars addendum with
+  native triggers in the database.
+- **Chose (Ryan):** keep TradingView alerts as the fast-lane feed for now, on the Seeking Alpha Quant
+  watchlist (`saa.symbols` active tiers A/B, 133 names) plus SPY/QQQ/IWM; Ryan sets the alerts himself.
+  The Alpaca addendum is shelved, not rejected — the M2 daemon computes the same triggers natively from the
+  broker feed, which retires the alert chore on its own schedule.
+- **Consequence:** ~136 open-ended alerts (Premium allowance permitting; tier A + indices first if the plan
+  caps lower). Every alert must be recreated whenever the Pine script changes — so the script is frozen at
+  v1 until M2 unless a bug forces a change.
+- **Revisit if:** alert maintenance becomes the bottleneck before M2, or the plan's alert cap binds.
+
 ## D9 (2026-09-27) — Goal 2 (Trading) in the Goals ledger: KILL — final (supersedes D8 and D3)
 
 - **Context:** Ryan asked for a plain explanation of Goal 2 and whether it was part of this build. It is not:
