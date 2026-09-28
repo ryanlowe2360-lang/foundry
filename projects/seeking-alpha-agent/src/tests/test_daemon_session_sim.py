@@ -262,6 +262,9 @@ async def test_full_session_simulation(env_file: Path, tmp_path: Path, fixtures:
     halts = {(h["symbol"], h["source"]) for h in stats["halts"]}
     assert ("ABCD", "nasdaq_rss") in halts and ("EFGH", "nasdaq_rss") in halts and ("IWM", "dxlink_profile") in halts
 
+    # --- feed lag monitor: the fake stamps trades with the virtual clock → real-time
+    assert stats["feed"]["mode"] == "realtime" and stats["feed"]["lag_s"] is not None and stats["feed"]["lag_s"] < 30 and stats["feed"]["n"] > 100
+
     # --- Telegram: heartbeat at 09:25 and the EOD report at 16:20, both through saa.outbox
     enq = [b for fn, b in http.calls if fn == "saa_enqueue"]
     assert len(enq) == 2 and enq[0]["p_kind"] == "system" and enq[0]["p_text"].startswith("SAA daemon ▸ Mon 2026-09-28 · v0.2.0 · testmac")
@@ -271,7 +274,7 @@ async def test_full_session_simulation(env_file: Path, tmp_path: Path, fixtures:
     eod = enq[1]["p_text"]
     assert eod.startswith("SAA daemon EOD ▸ 2026-09-28 · run 09:15–16:20 ET · 0 unhandled exceptions")
     assert "IWM 390/390" in eod and "QQQ 390/390" in eod and "SPY 390/390" in eod
-    assert "80 snapshots × 5 underlyings (expected 80)" in eod and "1 reconnects · errors caught: feed 1" in eod
+    assert "80 snapshots × 5 underlyings (expected 80)" in eod and "1 reconnects · lag 0s real-time · errors caught: feed 1" in eod
     assert [m["path"] for m in res.messages] == ["outbox", "outbox"]
 
     # --- mirrored into saa.*: every bar + snapshot pushed, run row patched to done, run_log has start/heartbeat/session

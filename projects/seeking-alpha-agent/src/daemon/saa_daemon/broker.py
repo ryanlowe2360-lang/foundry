@@ -36,6 +36,7 @@ class SessionInfo:
     account_type: str | None = None
     options_level: str | None = None
     quote_token_ok: bool | None = None
+    quote_level: str | None = None     # tastytrade's entitlement label on the DXLink token
 
 
 @dataclass
@@ -79,6 +80,7 @@ class Brokerage:
             try:
                 tok = await self.data._get("/api-quote-tokens")
                 self.data_info.quote_token_ok = bool(tok.get("token")) and bool(tok.get("dxlink-url"))
+                self.data_info.quote_level = str(tok.get("level")) if tok.get("level") is not None else None
             except Exception as e:  # noqa: BLE001
                 self.data_info.quote_token_ok = False
                 self.data_info.error = f"quote token: {type(e).__name__}: {str(e)[:120]}"

@@ -31,4 +31,13 @@ if [ ! -f .venv/.deps-ok ] || [ requirements.txt -nt .venv/.deps-ok ]; then
   .venv/bin/python -m pip install -q -r requirements.txt
   touch .venv/.deps-ok
 fi
+# On a Mac, keep the machine from idle-sleeping while a session runs (lid must still stay open unless on power
+# with an external display). -i = no idle sleep, -s = no system sleep while on AC power.
+if [ "$(uname -s)" = "Darwin" ] && command -v caffeinate >/dev/null 2>&1; then
+  for a in "$@"; do
+    case "$a" in
+      session|forever) exec caffeinate -i -s .venv/bin/python -m saa_daemon "$@" ;;
+    esac
+  done
+fi
 exec .venv/bin/python -m saa_daemon "$@"

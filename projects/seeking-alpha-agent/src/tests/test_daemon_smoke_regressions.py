@@ -182,3 +182,26 @@ def test_sdk_logger_is_quiet_after_setup(tmp_path: Path):
     assert f.filter(rec) is True
     root = logging.getLogger()
     assert all(any(isinstance(x, QuietSdkFilter) for x in h.filters) for h in root.handlers)
+
+
+def test_feed_lag_classification(env_file: Path, tmp_path: Path):
+    """Ryan's first live session (2026-09-28): every trade arrived 900 s after its exchange timestamp — the
+    15-minute delayed feed. The daemon must measure and label that itself."""
+    from saa_daemon.daemon import Daemon
+    from saa_daemon.reports import heartbeat_text, eod_text
+
+    d = Daemon(config.load_settings(env_file, environ={}, state_dir=tmp_path), host="t")
+    assert d.feed_lag() == {"lag_s": None, "mode": "unknown", "n": 0}
+    d.lag_samples.extend([899.9, 901.0, 900.4, 911.8, 900.2])
+    lag = d.feed_lag()
+    assert lag["mode"] == "DELAYED" and lag["lag_s"] == 900.4 and lag["n"] == 5
+    d.lag_samples.clear(); d.lag_samples.extend([0.4, 1.1, 0.9])
+    assert d.feed_lag()["mode"] == "realtime"
+    hb = heartbeat_text({"trade_date": __import__("datetime").date(2026, 9, 28), "version": "0.2.0", "host": "t",
+                         "broker": {"ok": True, "account_masked": "…9103", "account_type": "Cash"}, "data": {"ok": True, "quote_token_ok": True, "env": "prod", "quote_level": "api"},
+                         "index_symbols": ["SPY"], "single_names": [], "chains": {}, "vix": None, "gamma": None, "halts": 0, "econ": [], "mirror": True,
+                         "lag": {"lag_s": 900.4, "mode": "DELAYED", "n": 5}})
+    assert "prod DXLink ok (token level api) · feed lag 900s ⚠ DELAYED DATA" in hb
+    eod = eod_text({"trade_date": "2026-09-28", "bars": {}, "snapshots": {}, "feed": {"events": 10, "reconnects": 0, "lag_s": 900.4, "mode": "DELAYED"},
+                    "errors": {}, "mirror": {}, "telegram": []})
+    assert "lag 900s ⚠ DELAYED DATA" in eod

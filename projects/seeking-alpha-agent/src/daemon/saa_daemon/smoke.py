@@ -76,7 +76,8 @@ async def run_smoke(settings: Settings, *, telegram: bool = True) -> int:
     rep.add("sandbox_login", "PASS" if bi.ok else "FAIL",
             (f"account {bi.account_masked} ({bi.account_type}, options level {bi.options_level or '?'})" if bi.ok else bi.error or "failed"))
     rep.add("prod_login", "PASS" if di.ok else "FAIL", "production OAuth ok" if di.ok else (di.error or "failed"))
-    rep.add("quote_token", "PASS" if di.quote_token_ok else "FAIL", "DXLink token issued" if di.quote_token_ok else (di.error or "no token"))
+    rep.add("quote_token", "PASS" if di.quote_token_ok else "FAIL",
+            (f"DXLink token issued (level {di.quote_level or '?'})") if di.quote_token_ok else (di.error or "no token"))
     detail.update(sandbox_ok=bi.ok, prod_ok=di.ok, quote_token_ok=di.quote_token_ok, account=bi.account_masked)
 
     plan = None
@@ -106,9 +107,13 @@ async def run_smoke(settings: Settings, *, telegram: bool = True) -> int:
             from tastytrade.dxfeed import Quote
 
             got: list[str] = []
+            lags: list[float] = []
             async with DXLinkStreamer(brk.data) as st:
+                from tastytrade.dxfeed import Trade
+
                 subs = [settings.index_symbols[0]] + (plan.symbols()[:2] if plan else [])
                 await st.subscribe(Quote, subs)
+                await st.subscribe(Trade, [settings.index_symbols[0]])
                 try:
                     async with asyncio.timeout(20):
                         while len(got) < min(2, len(subs)):
@@ -116,6 +121,22 @@ async def run_smoke(settings: Settings, *, telegram: bool = True) -> int:
                             got.append(f"{q.event_symbol} {q.bid_price}/{q.ask_price}")
                 except TimeoutError:
                     pass
+                try:  # a few trades → exchange-time vs now = feed lag (only meaningful while the market trades)
+                    async with asyncio.timeout(8):
+                        while len(lags) < 5:
+                            t = await st.get_event(Trade)
+                            if t.time:
+                                lags.append(datetime.now(timezone.utc).timestamp() - t.time / 1000.0)
+                except TimeoutError:
+                    pass
+            if lags:
+                lags.sort()
+                med = lags[len(lags) // 2]
+                detail["feed_lag_s"] = round(med, 1)
+                rep.add("feed_lag", "PASS" if med < 30 else "WARN", f"median {med:.0f}s between exchange time and receipt" +
+                        (" — 15-MINUTE DELAYED DATA (account/entitlement, not the daemon)" if med > 600 else " — real-time" if med < 30 else ""))
+            else:
+                rep.add("feed_lag", "WARN", "no trades within 8 s (market closed?) — lag unmeasured")
             open_now = is_trading_day(et(now).date()) and et(now).hour * 60 + et(now).minute in range(9 * 60 + 30, 16 * 60)
             rep.add("dxlink", "PASS" if got else ("WARN" if not open_now else "FAIL"),
                     "; ".join(got) if got else "no quote within 20 s" + ("" if open_now else " (market closed — often normal)"))

@@ -13,7 +13,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
+import statistics
 import traceback
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Awaitable, Callable
@@ -76,6 +78,7 @@ class Daemon:
         self.unhandled = 0
         self.feed_events = 0
         self.feed_reconnects = 0
+        self.lag_samples: deque[float] = deque(maxlen=400)   # seconds between exchange time and receipt, underlying trades
         self.stop = asyncio.Event()
         self.stopping = False
         self.index_symbols: list[str] = list(settings.index_symbols)
@@ -188,6 +191,8 @@ class Daemon:
                 self.options.on_summary(e)
         elif isinstance(e, TradeEvt):
             if e.symbol in self.feed_plan.underlyings:
+                if e.time_ms > 0:
+                    self.lag_samples.append(self.now().timestamp() - e.time_ms / 1000.0)
                 q = self.quotes.setdefault(e.symbol, {})
                 q.update(last=e.price, day_volume=e.day_volume)
                 if e.price and e.symbol not in self.spots:
@@ -374,7 +379,7 @@ class Daemon:
             "chains": {"n_index": n_idx, "n_single": n_single, "exp_index": self.settings.expirations_index,
                        "exp_single": self.settings.expirations_single, "n_options": len(self.feed_plan.options)},
             "vix": self.vix_last, "gamma": gamma, "halts": len(self.store.halts_since(self.sched.open - timedelta(hours=6))) if self.sched else 0,
-            "econ": self.econ_today, "mirror": self.mirror.enabled,
+            "econ": self.econ_today, "mirror": self.mirror.enabled, "lag": self.feed_lag(),
         }
 
     async def send_heartbeat(self) -> None:
@@ -383,6 +388,13 @@ class Daemon:
 
     def _errors_payload(self) -> list[dict[str, Any]]:
         return [{"task": k, "count": v, "first": self.first_error.get(k)} for k, v in sorted(self.errors.items())]
+
+    def feed_lag(self) -> dict[str, Any]:
+        """Median exchange→receipt delay of underlying trades. ~1 s = real-time; ~900 s = the 15-minute delayed feed."""
+        if not self.lag_samples:
+            return {"lag_s": None, "mode": "unknown", "n": 0}
+        med = statistics.median(self.lag_samples)
+        return {"lag_s": round(med, 1), "mode": "realtime" if med < 30 else "DELAYED", "n": len(self.lag_samples)}
 
     def stats_snapshot(self) -> dict[str, Any]:
         sched = self.sched
@@ -398,7 +410,7 @@ class Daemon:
             "unhandled": self.unhandled, "errors": dict(self.errors),
             "bars": bars, "snapshots": snaps, "snapshots_expected": len(sched.snapshot_ticks(self.settings.snapshot_minutes)) if sched else None,
             "snapshot_ticks_done": self.snapshot_ticks_done, "n_options": len(self.feed_plan.options), "universe": self.index_symbols + self.single_names,
-            "feed": {"events": self.feed_events, "reconnects": self.feed_reconnects, "by_kind": getattr(self.feed, "by_kind", {})},
+            "feed": {"events": self.feed_events, "reconnects": self.feed_reconnects, "by_kind": getattr(self.feed, "by_kind", {}), **self.feed_lag()},
             "gamma_open": self.gamma_open, "gamma_close": self.gamma_last, "vix_open": self.vix_first, "vix_close": self.vix_last,
             "halts": self.store.halts_since(sched.open - timedelta(hours=6)) if sched else [],
             "mirror": self.mirror.status() if self._mirror is not None else {"enabled": False}, "telegram": list(self.notifier.sent) if self._notifier else [],

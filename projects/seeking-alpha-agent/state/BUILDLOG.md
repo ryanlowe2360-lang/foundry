@@ -2,6 +2,36 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-09-28 — session 5 (first live session run, started late; 15-minute delayed feed found)
+
+- **Did:** Ryan started `./run.sh session` at 13:17:36 ET (late). Observed live through the Supabase connector and the
+  recording on the Mac; built the feed-lag monitor; redeployed.
+- **Verified (evidence, live run `2026-09-28-131736-session`):**
+  - Heartbeat sent immediately with the LATE START flag (outbox row 7 `sent`); `saa.run_log` `daemon:start` + `daemon:heartbeat`.
+  - Universe from `saa_active_symbols()`: SPY QQQ IWM + 12 names from the 7:40 brief's watch (BFRI CCL CRDO JEF MTN NIO
+    RCL TLT TWLO USO XLE ZS); 684 option symbols streaming (BFRI had no chain — logged, skipped); 146,460 events in the
+    first 6 min; 0 reconnects, 0 errors, **0 unhandled**; 60-second pulses landing in `saa.daemon_runs` (`last_seen`).
+  - **dxfeed replayed the day's candles on connect**: 220 bars per symbol 09:30–13:09 within ~4 minutes of start, all
+    marked complete → a late start does not lose bar history (MTN 171, BFRI 82, TWLO/ZS 217 = genuinely thin names).
+  - Snapshots on the 5-minute marks from 13:20 (14 underlyings each); SPY 13:20: spot 766.85, 160 options, coverage
+    quotes/greeks/OI = 1.0/1.0/1.0, ATM IV 0.157, P/C OI 0.97, gamma regime negative, walls C768/P765. Mirror: 3,446 bar
+    upserts, 14 snapshots, 0 failures, queue 0 after 6 min.
+  - **Finding — the production DXLink feed is 15-minute delayed:** from the recording (6,945 SPY-class trades), receipt
+    minus exchange timestamp = min 899.9 s, median 901.0 s, p90 911.8 s; candles the same (min 900.2 s). The daemon is
+    not backlogged (cadence is exactly one bar per minute, 15 min behind). Likely cause: the tastytrade account's market
+    data entitlement (tastytrade serves delayed quotes to unfunded / not-yet-settled accounts); to confirm with Ryan and
+    the token `level` field. Fine for M2's plumbing; **a blocker for any live decision (M3+)** — recorded as an open question.
+- **Built:** `Daemon.feed_lag()` (median exchange→receipt delay of underlying trades; `realtime` < 30 s, else `DELAYED`)
+  in stats/`saa.daemon_runs`, heartbeat ("feed lag 900s ⚠ DELAYED DATA") and EOD report; DXLink token `level` captured
+  and printed by `smoke` (`quote_token … (level api)`); `smoke` now measures the lag from 5 trades during market hours
+  (`feed_lag` row); `run.sh` wraps `session`/`forever` in `caffeinate -i -s` on macOS. Tests **36 passed**.
+- **Lesson:** `device_commit_files` served a cached copy when the same staged paths were reused (mtimes unchanged on the
+  outputs mount) — the Mac received the previous versions although the tool reported "written". Always stage under a
+  fresh path and verify checksums on the Mac (caught by the checksum check; re-sent from `saa-m2-r3/`, all match).
+- **Stopped at:** today's run continues to 16:25 (partial day: ~33 snapshot ticks of 80, bars should reach 390 via replay
+  + live). M2 acceptance still needs a full-day run → Ryan runs `./run.sh session` before 9:20 tomorrow (or installs the
+  launchd agent). Then close M2.
+
 ## 2026-09-27 — session 4 ("M2 build": daemon data plane built and simulated; live run is Ryan's)
 
 - **Ruling applied:** Ryan waived the 10-day M1 record streak for M2's *data plane* (it stays the gate for M3 sizing).

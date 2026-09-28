@@ -5,7 +5,7 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-09-27T22:22:26Z",
+  "last_touched": "2026-09-28T17:37:23Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
@@ -47,10 +47,12 @@
     }
   ],
   "current_milestone": 2,
-  "next_action": "Close M2 (daemon data plane): smoke passed on Ryan's Mac twice (all PASS, 2026-09-27 18:19 ET; evidence in BUILDLOG session 4 and saa.run_log 'daemon:smoke'). Remaining: Ryan runs `./run.sh session` from Desktop/Seeking Alpha Agent /agent/daemon on a trading day before 9:20 AM ET with the Mac awake, then pastes the 16:20 EOD Telegram report. Next Claude session: confirm `select * from saa.run_log where job = 'daemon:session' order by ts desc limit 1` and `select * from saa.daemon_runs order by started_at desc limit 1` show bars.complete >= 380 for SPY/QQQ/IWM, snapshots per underlying == snapshots_expected (80), unhandled == 0 \u2192 mark milestone 2 done (foundry.py touch --milestone 2 --milestone-status done --current-milestone 3) and start M3 (rules engine + Kelly) in src/daemon/saa_daemon/engine/. If the session had errors, fix from the EOD text (src/daemon/saa_daemon/{feed,daemon,mirror}.py), re-run pytest src/tests -q (35 green), redeploy the changed files to agent/daemon via device_commit_files.",
+  "next_action": "Close M2 (daemon data plane): smoke passed twice; the 2026-09-28 live run started late (13:17) so it is a shakedown, not the acceptance run. Ryan runs `./run.sh session` from Desktop/Seeking Alpha Agent /agent/daemon on the next trading day before 9:20 AM ET (Mac awake; run.sh now uses caffeinate) or installs deploy/com.saa.daemon.plist. Next Claude session: read the EOD Telegram report + `select * from saa.run_log where job = 'daemon:session' order by ts desc limit 1` + `select stats from saa.daemon_runs order by started_at desc limit 1`; require bars.complete >= 380 for SPY/QQQ/IWM, snapshots per underlying == 80, unhandled == 0 \u2192 mark milestone 2 done (foundry.py touch --milestone 2 --milestone-status done --current-milestone 3). Also read stats.feed.lag_s / mode: if DELAYED, resolve the tastytrade market-data entitlement (open question) before M3 depends on live data. Verify: pytest src/tests -q (36 green).",
   "blockers": [],
-  "open_questions": [],
-  "sessions": 3,
+  "open_questions": [
+    "Production DXLink market data is 15-minute DELAYED on Ryan's account (measured 2026-09-28: median 901 s exchange\u2192receipt on 6,945 trades). Fine for M2 plumbing, a blocker for M3+ decisions. Confirm cause with Ryan \u2014 is the tastytrade account funded and settled (tastytrade serves delayed quotes to unfunded accounts)? Does the tastytrade app show 'delayed'? Check the token 'level' in the next smoke output. Real-time data is required before M3 trades on it."
+  ],
+  "sessions": 4,
   "tags": [
     "trading",
     "options",

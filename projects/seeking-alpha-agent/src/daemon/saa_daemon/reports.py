@@ -33,6 +33,11 @@ def heartbeat_text(ctx: dict[str, Any]) -> str:
     broker = (f"sandbox ok (acct {b.get('account_masked') or '?'}, {b.get('account_type') or '?'}"
               f"{', options ' + str(b.get('options_level')) if b.get('options_level') else ''})") if b.get("ok") else f"sandbox FAILED ({b.get('error') or 'unknown'})"
     data = f"{d.get('env', 'prod')} DXLink ok" if d.get("ok") and d.get("quote_token_ok") else f"{d.get('env', 'prod')} FAILED ({d.get('error') or 'no quote token'})"
+    if d.get("quote_level"):
+        data += f" (token level {d['quote_level']})"
+    lag = ctx.get("lag") or {}
+    if lag.get("lag_s") is not None:
+        data += f" · feed lag {lag['lag_s']:.0f}s" + (" ⚠ DELAYED DATA" if lag.get("mode") == "DELAYED" else " (real-time)")
     idx, names = ctx.get("index_symbols", []), ctx.get("single_names", [])
     ch = ctx.get("chains", {})
     econ = ctx.get("econ") or []
@@ -81,7 +86,8 @@ def eod_text(stats: dict[str, Any]) -> str:
         f"Gamma SPY: open {go.get('regime', '?')} (flip {_f(go.get('flip'), 2)}) → close {gc.get('regime', '?')} (flip {_f(gc.get('flip'), 2)})",
         f"VIX {_f(vo.get('vix'))}→{_f(vc.get('vix'))} · 1D {_f(vo.get('vix1d'))}→{_f(vc.get('vix1d'))} · 3M {_f(vo.get('vix3m'))}→{_f(vc.get('vix3m'))} · {vo.get('shape') or '?'}→{vc.get('shape') or '?'}",
         f"Halts: {len(halts)}" + (f" ({halt_desc})" if halts else ""),
-        f"Feed: {feed.get('events', 0):,} events · {feed.get('reconnects', 0)} reconnects · errors caught: {err_desc}",
+        f"Feed: {feed.get('events', 0):,} events · {feed.get('reconnects', 0)} reconnects · lag {_f(feed.get('lag_s'), 0)}s"
+        + (" ⚠ DELAYED DATA" if feed.get("mode") == "DELAYED" else (" real-time" if feed.get("mode") == "realtime" else "")) + f" · errors caught: {err_desc}",
         f"Mirror: {'on' if m.get('enabled') else 'OFF'} · {pushed.get('bars', 0):,} bar upserts · {pushed.get('snapshots', 0)} snapshots · {pushed.get('vix', 0)} vix · queue {m.get('queue', 0)} · failures {m.get('failures', 0)}",
         f"Telegram: {tg_desc}",
     ]

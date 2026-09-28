@@ -453,7 +453,7 @@ def test_report_texts_have_shape():
         "mirror": {"enabled": True, "pushed": {"bars": 2345, "snapshots": 553, "vix": 79}, "queue": 0, "failures": 0},
         "telegram": [{"kind": "system", "path": "outbox"}]})
     assert "0 unhandled exceptions" in eod and "SPY 390/390" in eod and "IWM 389/390 (gap 12:07)" in eod
-    assert "80 snapshots × 2 underlyings (expected 80)" in eod and "1,234,567 events · 1 reconnects · errors caught: feed 1" in eod
+    assert "80 snapshots × 2 underlyings (expected 80)" in eod and "1,234,567 events · 1 reconnects · lag —s · errors caught: feed 1" in eod
     assert "Halts: 1 (ABCD 09:45 LUDP)" in eod and "Telegram: system via outbox" in eod
 
 
