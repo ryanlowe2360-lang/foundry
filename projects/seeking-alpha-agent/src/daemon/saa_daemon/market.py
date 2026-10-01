@@ -45,6 +45,7 @@ class MarketState:
     underlyings: set[str]
     feed_events: int = 0
     on_profile: Callable[[ProfileEvt], None] | None = None
+    session_open: datetime | None = None   # lag samples count only trades stamped at/after today's open (see on_event)
 
     @classmethod
     def new(cls, *, on_profile: Callable[[ProfileEvt], None] | None = None) -> "MarketState":
@@ -74,7 +75,9 @@ class MarketState:
                 self.options.on_summary(e)
         elif isinstance(e, TradeEvt):
             if e.symbol in self.underlyings:
-                if e.time_ms > 0:
+                # dxfeed's Trade event is the *regular-session* last sale: before 09:30 (and after 16:00) it still carries the
+                # previous close's print, so its age says nothing about the feed. Only trades stamped inside today's session count.
+                if e.time_ms > 0 and (self.session_open is None or e.time_ms >= int(self.session_open.timestamp() * 1000)):
                     self.lag_samples.append(now.timestamp() - e.time_ms / 1000.0)
                 q = self.quotes.setdefault(e.symbol, {})
                 q.update(last=e.price, day_volume=e.day_volume)

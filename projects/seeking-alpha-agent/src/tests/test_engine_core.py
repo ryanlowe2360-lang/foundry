@@ -312,3 +312,30 @@ def test_engine_canonical_output_is_byte_stable_and_complete():
     row = gate.row()
     assert row["model_version"] == "dxlink-marks-v1" and row["source"] == "engine" and row["engine_source"] == "gate" and row["counts_for_rails"]
     assert row["entry_premium"] == gate.entry_ask and row["spread_frac"] == pytest.approx((gate.entry_ask - gate.entry_bid) / gate.entry_ask, abs=1e-6)
+
+
+# ------------------------------------------------------------------------------------------------ feed-lag rule
+def test_feed_lag_ignores_stale_regular_session_prints():
+    """dxfeed's Trade event is the regular-session last sale: before the open it still carries yesterday's close, after the
+    close it is frozen at 16:00. Neither says anything about the feed, so only trades stamped inside today's session count."""
+    from saa_daemon.events import TradeEvt
+    from saa_daemon.market import MarketState
+    m = MarketState.new()
+    m.underlyings.add("SPY")
+    m.session_open = SCHED.open
+    yesterday_close = at(16, 0, d=D - timedelta(days=3))                         # Friday's close, seen at 09:20 Monday
+    m.on_event(TradeEvt("SPY", int(yesterday_close.timestamp() * 1000), 650.0, 100.0, 1e5), at(9, 20))
+    assert m.feed_lag() == {"lag_s": None, "mode": "unknown", "n": 0}
+    t = at(9, 31, 5)
+    m.on_event(TradeEvt("SPY", int(t.timestamp() * 1000) - 800, 650.2, 100.0, 1e5), t)         # 0.8 s old: real-time
+    assert m.feed_lag()["mode"] == "realtime" and m.feed_lag()["n"] == 1
+    m2 = MarketState.new()
+    m2.underlyings.add("SPY")
+    m2.session_open = SCHED.open
+    t2 = at(10, 0, 2)
+    m2.on_event(TradeEvt("SPY", int(t2.timestamp() * 1000) - 901_000, 650.0, 100.0, 1e5), t2)   # 15 minutes old inside the session
+    assert m2.feed_lag()["mode"] == "DELAYED" and m2.feed_lag()["lag_s"] == 901.0
+    m3 = MarketState.new()                                                                      # no session_open set: old behaviour
+    m3.underlyings.add("SPY")
+    m3.on_event(TradeEvt("SPY", int(yesterday_close.timestamp() * 1000), 650.0, 100.0, 1e5), at(9, 20))
+    assert m3.feed_lag()["mode"] == "DELAYED"

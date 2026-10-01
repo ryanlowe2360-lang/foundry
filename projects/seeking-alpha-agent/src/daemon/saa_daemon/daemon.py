@@ -575,6 +575,7 @@ class Daemon:
         today = self._trade_date or et(self.now()).date()
         self.sched = Schedule.for_date(today)
         sched = self.sched
+        self.market.session_open = sched.open
         self.started_at = self.now()
         self.run_id = f"{today.isoformat()}-{et(self.started_at):%H%M%S}-{self.mode}"
         if not is_trading_day(today) and not self.force:

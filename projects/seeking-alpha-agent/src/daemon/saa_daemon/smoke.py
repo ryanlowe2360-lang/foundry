@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import __version__
@@ -129,15 +129,23 @@ async def run_smoke(settings: Settings, *, telegram: bool = True) -> int:
                                 lags.append(datetime.now(timezone.utc).timestamp() - t.time / 1000.0)
                 except TimeoutError:
                     pass
-            if lags:
+            regular_hours = is_trading_day(et(now).date()) and et(now).hour * 60 + et(now).minute in range(9 * 60 + 30, 16 * 60)
+            if lags and regular_hours:
                 lags.sort()
                 med = lags[len(lags) // 2]
                 detail["feed_lag_s"] = round(med, 1)
                 detail["feed_lag_mode"] = "realtime" if med < 30 else "DELAYED"
                 rep.add("feed_lag", "PASS" if med < 30 else "WARN", f"median {med:.0f}s between exchange time and receipt" +
                         (" — 15-MINUTE DELAYED DATA (account/entitlement, not the daemon)" if med > 600 else " — real-time" if med < 30 else ""))
+            elif lags:
+                # dxfeed's Trade event is the regular-session last sale: outside 09:30–16:00 its age is just the time since the close
+                last_print = et(now) - timedelta(seconds=sorted(lags)[len(lags) // 2])
+                detail["feed_lag_mode"] = "unmeasured"
+                rep.add("feed_lag", "WARN", f"not measurable outside regular hours (last regular-session print {last_print:%H:%M} ET) — "
+                        "run between 09:30 and 16:00 ET, or read the session's heartbeat/EOD 'feed lag'")
             else:
-                rep.add("feed_lag", "WARN", "no trades within 8 s (market closed?) — lag unmeasured")
+                detail["feed_lag_mode"] = "unmeasured"
+                rep.add("feed_lag", "WARN", "no trades within 8 s — lag unmeasured (run between 09:30 and 16:00 ET)")
             open_now = is_trading_day(et(now).date()) and et(now).hour * 60 + et(now).minute in range(9 * 60 + 30, 16 * 60)
             rep.add("dxlink", "PASS" if got else ("WARN" if not open_now else "FAIL"),
                     "; ".join(got) if got else "no quote within 20 s" + ("" if open_now else " (market closed — often normal)"))
@@ -191,12 +199,13 @@ async def run_smoke(settings: Settings, *, telegram: bool = True) -> int:
             hist = []
         post = posterior([float(r["r_result"]) for r in hist if r.get("r_result") is not None])
         table_ok = [round(kelly_fraction(p_, w_) * 100) for p_, w_ in ((0.25, 4), (0.30, 5), (0.35, 6))] == [6, 16, 24]
-        lag_mode = detail.get("feed_lag_mode") or "unknown"
+        lag_mode = detail.get("feed_lag_mode") or "unmeasured"
         rep.add("engine", "PASS" if table_ok else "FAIL",
                 f"rules v{rules.version}" + (f" ({len(rules.ignored)} Tier 1 keys ignored)" if rules.ignored else "") +
                 (f" · {n_cl} checklists today" if n_cl is not None else " · checklists n/a (mirror off)") +
                 f" · ledger n={post.n} p={post.p:.3f} W={post.w:.1f} f*={post.f_full:.3f}" + (" → floor" if post.n == 0 else "") +
-                f" · Kelly table {'ok' if table_ok else 'MISMATCH'} · live eval {'ON' if lag_mode == 'realtime' else 'OFF (feed ' + lag_mode + ')'}")
+                f" · Kelly table {'ok' if table_ok else 'MISMATCH'} · live eval " +
+                ("ON" if lag_mode == "realtime" else "OFF (feed DELAYED)" if lag_mode == "DELAYED" else "decided at 09:30 from the first trades (lag unmeasured now)"))
         detail.update(rules_version=rules.version, engine_posterior_n=post.n)
     except Exception as e:  # noqa: BLE001
         rep.add("engine", "FAIL", f"{type(e).__name__}: {str(e)[:120]}")

@@ -171,7 +171,8 @@ async def test_engine_full_session_live_equals_replay(env_file: Path, tmp_path: 
     st = res.stats["engine"]
 
     # --- the engine ticked every minute from 09:25, evaluated gates in the entry windows, fired SPY in the open window
-    assert st["ticks"] >= 410 and st["observe_only_ticks"] == 0 and st["feed_mode"] == "realtime"
+    # 09:30:02 is the only tick without a same-session trade sample (the pre-open print is yesterday's close and is ignored)
+    assert st["ticks"] >= 410 and st["observe_only_ticks"] <= 1 and st["feed_mode"] == "realtime"
     fired = [p for p in eng.positions.values() if p.source == "gate"]
     assert st["counts"]["fired"] >= 1 and fired and fired[0].symbol == "SPY" and fired[0].window == "open" and fired[0].direction == "long"
     spy = fired[0]
@@ -207,9 +208,10 @@ async def test_engine_full_session_live_equals_replay(env_file: Path, tmp_path: 
     alerts = [b["p_text"] for b in enq if b["p_kind"] == "alert"]
     assert len(alerts) == 2 and alerts[0].startswith("SHADOW open ▸ SPY long .SPY260928C") and "6/6 gates · p=0.32" in alerts[0] and alerts[1].startswith("SHADOW close ▸ SPY")
     hb = [b["p_text"] for b in enq if b["p_kind"] == "system"][0]
-    assert "Engine: LIVE eval · rules v2 · acct $1,000 k=0.50 · posterior n=0" in hb and "→ floor" in hb and "4 fast lanes" in hb
+    assert "Engine: feed lag not measured yet (real-time required to evaluate) · rules v2 · acct $1,000 k=0.50 · posterior n=0" in hb and "→ floor" in hb and "4 fast lanes" in hb
     eod = [b["p_text"] for b in enq if b["p_kind"] == "system"][1]
-    assert "Engine: rules v2 · live eval ·" in eod and "fired" in eod and "Shadow R: gate" in eod and "Stand-downs:" in eod
+    import re
+    assert re.search(r"Engine: rules v2 · (live eval|observe-only 1/\d+ ticks) ·", eod) and "fired" in eod and "Shadow R: gate" in eod and "Stand-downs:" in eod
     session_log = calls["saa_log_run"][-1]
     assert session_log["p_detail"]["engine"]["rules_version"] == 2 and session_log["p_detail"]["engine"]["counts"]["fired"] == st["counts"]["fired"]
     for s in config.load_settings(env_file, environ={}, state_dir=tmp_path).secret_values():
@@ -225,7 +227,8 @@ async def test_engine_full_session_live_equals_replay(env_file: Path, tmp_path: 
     assert kinds["Meta"] == 1 and kinds["Plan"] == 5 and kinds["Tick"] == st["ticks"] and kinds["OptMarks"] >= 5 * 400 and kinds["Candle"] > 5000
     rep1 = replay_engine(rec)
     rep2 = replay_engine(rec)
-    assert rep1.canonical == rep2.canonical and rep1.ticks == st["ticks"] and not rep1.synthesized_ticks and rep1.feed_modes == {"realtime": st["ticks"]}
+    assert rep1.canonical == rep2.canonical and rep1.ticks == st["ticks"] and not rep1.synthesized_ticks
+    assert rep1.feed_modes.get("realtime", 0) >= 400 and rep1.feed_modes.get("unknown", 0) <= 11      # pre-open ticks: no same-session trade yet
     live = json.loads(eng.canonical())
     replayed = json.loads(rep1.canonical)
     assert replayed["decisions"] == live["decisions"]
@@ -247,7 +250,7 @@ async def test_engine_delayed_feed_is_observe_only(env_file: Path, tmp_path: Pat
     enq = [b for fn, b in http.calls if fn == "saa_enqueue"]
     assert not [b for b in enq if b["p_kind"] == "alert"]
     hb, eod = [b["p_text"] for b in enq if b["p_kind"] == "system"]
-    assert "Engine: observe-only (feed DELAYED 900s)" in hb and "⚠ DELAYED DATA" in hb
+    assert "Engine: feed lag not measured yet" in hb                      # 09:25: no same-session trade yet, by design
     assert "OBSERVE-ONLY all day (feed DELAYED)" in eod and "0 fired" in eod
     assert not [b for fn, b in http.calls if fn == "saa_engine_shadow_upsert"]
     # the recording still replays deterministically and reports the delayed feed

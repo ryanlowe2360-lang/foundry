@@ -99,6 +99,20 @@ Append-only. Newest entry on top. Every session that touches this project adds o
   `./run.sh smoke` (real-time < 30 s) or Friday's 09:25 heartbeat ("LIVE eval" instead of "observe-only"). Open question
   reworded accordingly. Ryan will run Friday's session himself; a follow-up chat prompt covers the retention step, the launchd
   Full Disk Access fix (after Friday's manual run, never alongside it) and the M4 sandbox-account check.
+- **Follow-up (19:04–19:20 ET) — feed-lag measurement bug found by Ryan's smoke run:** at 19:02 ET the `feed_lag` row said
+  "median 10978s — 15-MINUTE DELAYED DATA". 10,978 s before 19:02:50 is 15:59:52 — the closing print. dxfeed's `Trade` event is
+  the *regular-session* last sale (extended-hours trades are a different event), so outside 09:30–16:00 its age is just the time
+  since the close, and at the 09:25 heartbeat it would have been yesterday's close (→ a false "DELAYED" / observe-only on the
+  heartbeat until the first 09:30 trades). Fixed: `MarketState.session_open` — lag samples count only trades stamped at/after
+  today's open (daemon + replay set it; a MarketState without it keeps the old behaviour); `smoke` says "not measurable outside
+  regular hours (last regular-session print HH:MM ET)" and the engine row says "live eval decided at 09:30 from the first trades";
+  the 09:25 heartbeat says "feed lag not measured yet (real-time required to evaluate)". Tests: `test_feed_lag_ignores_stale_
+  regular_session_prints` + sim expectations (one unmeasured tick at 09:30:02 is legitimate); **88 passed**. The four changed
+  files (`daemon.py`, `market.py`, `smoke.py`, `engine/replay.py`) were committed to the Mac and checksum-verified
+  (`23b93190…`, `7d8d5d32…`, `3a659…`, `47bcd823…`), syntax-checked there. Tonight's smoke otherwise: ALL CRITICAL STEPS PASSED,
+  token level `api`, live after-hours quotes (SPY 764.61/764.69, `.SPY261002C745 18.72/20.11`), 34 expirations, VIX 16.39 /
+  13.85 / 14.0 / 18.58 contango, engine row "rules v2 · 5 checklists today · ledger n=0 … → floor · Kelly table ok". The real
+  entitlement answer therefore comes from Friday's session (heartbeat/EOD feed lag), not from an after-hours smoke.
 - **Acceptance (spec M3) walked:** (1) property tests for every Tier 1 rail — `test_engine_rails.py` + `test_engine_kelly.py`
   ✓; (2) replay of ≥ 5 recorded sessions deterministic, byte-identical — 5 synthetic + the simulated session's own
   recording (live == replay) ✓ (the real 09-28 file joins when staged); (3) Kelly tests reproduce the plan table ✓.

@@ -86,6 +86,7 @@ def replay_engine(path: Path, *, require_realtime: bool | None = None, trade_dat
             meta = _default_meta(path, now_ms, sorted(set(symbols_seen)), trade_date=trade_date, require_realtime=(True if require_realtime is None else require_realtime))
             engine = build_engine(meta, require_realtime=require_realtime)
             market.underlyings |= set(meta["universe"])
+            market.session_open = engine.sched.open
         return engine
 
     def tick(now: datetime, rec: dict[str, Any] | None) -> None:
@@ -113,6 +114,7 @@ def replay_engine(path: Path, *, require_realtime: bool | None = None, trade_dat
             meta = rec
             engine = build_engine(meta, require_realtime=require_realtime)
             market.underlyings |= set(meta.get("universe") or [])
+            market.session_open = engine.sched.open
         elif kind == "Plan":
             market.plans[rec["symbol"]] = plan_from_record(rec)
             market.underlyings.add(rec["symbol"])
