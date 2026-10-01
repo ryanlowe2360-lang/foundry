@@ -1,6 +1,10 @@
 # Foundry Ledger
 
-*Generated 2026-10-01T23:09:46Z by `scripts/foundry.py ledger` — do not edit by hand.*
+*Generated 2026-10-01T23:10:53Z by `scripts/foundry.py ledger` — do not edit by hand.*
+
+## 🙋 Needs you
+
+- **Seeking Alpha Agent — Autonomous Intraday Options Agent** (`seeking-alpha-agent`) — **question:** Market-data entitlement: production DXLink measured 15-minute DELAYED on 2026-09-28 (median 901 s during the session). Ryan funded the account and reports real-time quotes in the tastytrade app (2026-10-01). An after-hours smoke cannot measure it (dxfeed Trade = regular-session last sale; the smoke now says so). Confirm Friday 2026-10-02: ./run.sh smoke between 09:30 and 16:00 ET → feed_lag row real-time, or the EOD report's 'Feed: … lag Ns real-time' / engine line 'live eval'. Until then the engine runs observe-only by design (D19).
 
 ## 🔨 In flight
 
