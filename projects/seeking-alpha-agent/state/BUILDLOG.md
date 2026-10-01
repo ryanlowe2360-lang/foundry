@@ -2,6 +2,17 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-10-01 — session 7 (housekeeping chat: retention line, launchd fix, M4 sandbox-account check — setup only, no engine/M4 work)
+
+- **Item 1 — migration 0007 part 2 DONE (19:09 ET):** `saa.engine_decisions` retention (120 days) added to the `saa_housekeeping`
+  pg_cron job (jobid 8, `0 6 * * *`, active). The Supabase MCP tool cancelled the `cron.alter_job` statement again (it blocks any
+  statement containing `delete`, so the approval prompt never appeared); Ryan pasted the exact statement from the migration file into the
+  Supabase SQL editor instead. Before the attempt the live command held exactly the seven existing lines (price_ticks 90 d, run_log 60 d,
+  market_snapshots 180 d, bars_1m 120 d, chain_snapshots 45 d, halts 180 d, daemon_runs 180 d) — so the statement only appended the eighth.
+  - **Verified (read-only, via the connector):** `select command like '%engine_decisions%' from cron.job where jobname = 'saa_housekeeping'`
+    → `true`; command now ends `delete from saa.engine_decisions where ts < now() - interval '120 days'`; first seven lines intact; job still active.
+  - Open question "Supabase retention for `saa.engine_decisions`" is **closed**.
+
 ## 2026-10-01 — session 6 ("M3 build": rules engine + Kelly sizing + shadow ledger on real marks — built and verified offline)
 
 - **Ruling applied:** M2 stays `in-progress` until Ryan's full-day session run (Friday 2026-10-02) is verified. M3 was built to be

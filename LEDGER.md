@@ -1,6 +1,6 @@
 # Foundry Ledger
 
-*Generated 2026-10-01T22:54:48Z by `scripts/foundry.py ledger` — do not edit by hand.*
+*Generated 2026-10-01T23:09:44Z by `scripts/foundry.py ledger` — do not edit by hand.*
 
 ## 🔨 In flight
 
