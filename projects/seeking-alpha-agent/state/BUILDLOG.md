@@ -83,6 +83,11 @@ Append-only. Newest entry on top. Every session that touches this project adds o
   byte-identical (sha256 `966dd0da…`), gated replay observe-only 31/31, ungated replay stands down on the Tier 1 dead zone
   (13:23 SPY VWAP signal → "Tier 1 dead zone 11:30–13:30"). Suite: **87 passed**, 0 skipped. (The bundle + installer that went
   through the chat earlier are now redundant; harmless if run — same bytes.)
+- **Follow-up (18:54 ET, Ryan):** the tastytrade app no longer shows delayed quotes after he funded the account — consistent with
+  the unfunded-account hypothesis for the 15-minute delay. Daemon-side confirmation still owed: the `feed_lag` row of
+  `./run.sh smoke` (real-time < 30 s) or Friday's 09:25 heartbeat ("LIVE eval" instead of "observe-only"). Open question
+  reworded accordingly. Ryan will run Friday's session himself; a follow-up chat prompt covers the retention step, the launchd
+  Full Disk Access fix (after Friday's manual run, never alongside it) and the M4 sandbox-account check.
 - **Acceptance (spec M3) walked:** (1) property tests for every Tier 1 rail — `test_engine_rails.py` + `test_engine_kelly.py`
   ✓; (2) replay of ≥ 5 recorded sessions deterministic, byte-identical — 5 synthetic + the simulated session's own
   recording (live == replay) ✓ (the real 09-28 file joins when staged); (3) Kelly tests reproduce the plan table ✓.

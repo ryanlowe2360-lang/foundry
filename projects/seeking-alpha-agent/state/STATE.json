@@ -5,7 +5,7 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-10-01T22:44:26Z",
+  "last_touched": "2026-10-01T22:54:48Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
@@ -49,9 +49,7 @@
   "current_milestone": 2,
   "next_action": "Two Ryan steps, then M4. (1) Close M2: Friday 2026-10-02 before 09:20 ET, Mac awake, Terminal: cd \"$HOME/Desktop/Seeking Alpha Agent /agent/daemon\" && ./run.sh session (v0.3.0 is deployed and checksum-verified; a ./run.sh smoke beforehand shows the new feed_lag + engine rows). Next Claude session: read the EOD Telegram text + select * from saa.run_log where job = 'daemon:session' order by ts desc limit 1 + select stats from saa.daemon_runs order by started_at desc limit 1; require bars.complete >= 380 for SPY/QQQ/IWM, snapshots per underlying == 80, unhandled == 0 \u2192 foundry.py touch --milestone 2 --milestone-status done --current-milestone 4. Read stats.feed.mode: if DELAYED the engine ran observe-only (expected until the tastytrade market-data entitlement is fixed \u2014 open question; the smoke's feed_lag row and token 'level', and whether the account is funded/settled, are the clues); if realtime, stats.engine.counts shows the first live gate evaluations and stats.engine.positions the first real-mark shadows. (2) Run migration 0007 part 2 (engine_decisions retention via cron.alter_job \u2014 SQL in src/supabase/migrations/0007_engine_ledger.sql) from the Supabase SQL editor. Then start M4 (paper execution + approval mode + dashboard) in src/daemon/saa_daemon/execution/ \u2014 first step: sandbox order path behind the same feed gate, reusing Engine events 'open'/'close' as order intents; M4 prerequisite: confirm the Cash sandbox account \u20269103 can buy long calls/puts. Verify: pytest src/tests -q (87 passed).",
   "blockers": [],
-  "open_questions": [
-    "Production DXLink market data is 15-minute DELAYED on Ryan's account (measured 2026-09-28: median 901 s exchange\u2192receipt on 6,945 trades). Fine for M2 plumbing, a blocker for M3+ decisions. Confirm cause with Ryan \u2014 is the tastytrade account funded and settled (tastytrade serves delayed quotes to unfunded accounts)? Does the tastytrade app show 'delayed'? Check the token 'level' in the next smoke output. Real-time data is required before M3 trades on it."
-  ],
+  "open_questions": [],
   "sessions": 5,
   "tags": [
     "trading",

@@ -1,10 +1,6 @@
 # Foundry Ledger
 
-*Generated 2026-10-01T22:44:26Z by `scripts/foundry.py ledger` — do not edit by hand.*
-
-## 🙋 Needs you
-
-- **Seeking Alpha Agent — Autonomous Intraday Options Agent** (`seeking-alpha-agent`) — **question:** Production DXLink market data is 15-minute DELAYED on Ryan's account (measured 2026-09-28: median 901 s exchange→receipt on 6,945 trades). Fine for M2 plumbing, a blocker for M3+ decisions. Confirm cause with Ryan — is the tastytrade account funded and settled (tastytrade serves delayed quotes to unfunded accounts)? Does the tastytrade app show 'delayed'? Check the token 'level' in the next smoke output. Real-time data is required before M3 trades on it.
+*Generated 2026-10-01T22:54:48Z by `scripts/foundry.py ledger` — do not edit by hand.*
 
 ## 🔨 In flight
 
