@@ -142,11 +142,36 @@ class SupabaseMirror:
         self.rows_pushed["halts"] += len(rows)
         return len(rows)
 
+    async def flush_engine_trades(self, limit: int = 200) -> int:
+        """Shadow-ledger rows → saa.shadow_trades (source 'engine', keyed by engine_key)."""
+        if not self.enabled:
+            return 0
+        rows = self.store.dirty_engine_trades(limit)
+        if not rows:
+            return 0
+        await self.rpc("saa_engine_shadow_upsert", {"p_rows": [r["payload"] for r in rows]})
+        for r in rows:
+            self.store.mark_engine_trade_mirrored(r["engine_key"], r["updated_at"])
+        self.rows_pushed["engine_trades"] = self.rows_pushed.get("engine_trades", 0) + len(rows)
+        return len(rows)
+
+    async def flush_engine_decisions(self, limit: int = 500) -> int:
+        if not self.enabled:
+            return 0
+        rows = self.store.dirty_engine_decisions(limit)
+        if not rows:
+            return 0
+        await self.rpc("saa_engine_decisions_insert", {"p_rows": [{"trade_date": r["trade_date"], "run_id": r["run_id"], **r["payload"]} for r in rows]})
+        self.store.mark_engine_decisions_mirrored([r["id"] for r in rows])
+        self.rows_pushed["engine_decisions"] = self.rows_pushed.get("engine_decisions", 0) + len(rows)
+        return len(rows)
+
     async def flush_all(self) -> dict[str, int]:
         """One mirror round. Each part is independent; failures are counted, never raised."""
         out: dict[str, int] = {}
         for name, fn in (("queue", self.flush_queue), ("bars", self.flush_bars), ("snapshots", self.flush_snapshots),
-                         ("vix", self.flush_vix), ("halts", self.flush_halts)):
+                         ("vix", self.flush_vix), ("halts", self.flush_halts), ("engine_trades", self.flush_engine_trades),
+                         ("engine_decisions", self.flush_engine_decisions)):
             try:
                 out[name] = await fn()
             except MirrorError as e:
@@ -158,6 +183,22 @@ class SupabaseMirror:
     async def active_symbols(self) -> list[str]:
         data = await self.rpc("saa_active_symbols", {})
         return [str(s).upper() for s in (data or []) if s]
+
+    async def rules_latest(self) -> dict[str, Any] | None:
+        data = await self.rpc("saa_rules_latest", {})
+        return data if isinstance(data, dict) and data.get("params") else None
+
+    async def checklists_today(self, d: str | None = None) -> list[dict[str, Any]]:
+        data = await self.rpc("saa_checklists_today", {"p_date": d} if d else {})
+        return [r for r in (data or []) if isinstance(r, dict)]
+
+    async def engine_ledger(self, limit: int = 60) -> list[dict[str, Any]]:
+        """Closed gate-fired engine trades, oldest first: [{engine_key, trade_date, r_result, counts_for_rails}]."""
+        data = await self.rpc("saa_engine_ledger", {"p_limit": limit})
+        return [r for r in (data or []) if isinstance(r, dict)]
+
+    async def set_setting(self, key: str, value: str) -> None:
+        await self.rpc("saa_set_setting", {"p_key": key, "p_value": value})
 
     async def calendar_day(self, d: str | None = None) -> dict[str, Any]:
         data = await self.rpc("saa_calendar_day", {"p_date": d} if d else {})

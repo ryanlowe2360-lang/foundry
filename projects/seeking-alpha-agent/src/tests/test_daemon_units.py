@@ -338,6 +338,14 @@ class FakeHttp:
                 return 200, {"trade_date": "2026-09-28", "watch": ["NVDA"], "econ": [{"event": "Dallas Fed", "time_et": "10:30"}]}
             if fn == "saa_daemon_status":
                 return 200, {"bars_today": 0}
+            if fn == "saa_rules_latest":
+                return 200, self.rules_row()
+            if fn == "saa_checklists_today":
+                return 200, self.checklists()
+            if fn == "saa_engine_ledger":
+                return 200, []
+            if fn in ("saa_engine_shadow_upsert", "saa_engine_decisions_insert"):
+                return 200, len(body["p_rows"])
             return 200, None
         if "api.telegram.org" in url:
             if "bad" in url:
@@ -345,6 +353,14 @@ class FakeHttp:
             self.telegram.append(body)
             return 200, {"ok": True, "result": {"message_id": 7}}
         return 404, {"message": "unknown"}
+
+    def rules_row(self):
+        """Override in a test to serve a saa.rules row; None → the engine uses its built-in defaults."""
+        return None
+
+    def checklists(self):
+        """Override in a test to serve today's brief checklists (saa_checklists_today)."""
+        return []
 
     async def get_json(self, url, *, headers=None, timeout=15.0):
         if self.down:
@@ -381,7 +397,7 @@ async def test_mirror_flush_and_queue(env_file: Path, tmp_path: Path):
     st.upsert_halts([{"symbol": "ABCD", "halt_time": "2026-09-28T13:45:12Z", "reason_code": "LUDP", "source": "nasdaq_rss"}])
     m.queue("saa_log_run", {"p_job": "daemon:start", "p_ok": True, "p_detail": {}}, t0)
     out = await m.flush_all()
-    assert out == {"queue": 1, "bars": 1, "snapshots": 1, "vix": 1, "halts": 1}
+    assert out == {"queue": 1, "bars": 1, "snapshots": 1, "vix": 1, "halts": 1, "engine_trades": 0, "engine_decisions": 0}
     fns = [c[0] for c in http.calls]
     assert fns == ["saa_log_run", "saa_bars_upsert", "saa_chain_snapshot", "saa_snapshot", "saa_halts_upsert"]
     bars_call = dict(http.calls)["saa_bars_upsert"]
@@ -405,7 +421,7 @@ async def test_mirror_flush_and_queue(env_file: Path, tmp_path: Path):
     # disabled mirror is a no-op everywhere
     s2 = config.load_settings(env_file, environ={"SAA_MIRROR": "false"}, state_dir=tmp_path)
     m2 = SupabaseMirror(s2, st, http)
-    assert not m2.enabled and await m2.flush_all() == {"queue": 0, "bars": 0, "snapshots": 0, "vix": 0, "halts": 0}
+    assert not m2.enabled and await m2.flush_all() == {"queue": 0, "bars": 0, "snapshots": 0, "vix": 0, "halts": 0, "engine_trades": 0, "engine_decisions": 0}
     with pytest.raises(MirrorError):
         await m2.rpc("saa_log_run", {})
 

@@ -267,7 +267,7 @@ async def test_full_session_simulation(env_file: Path, tmp_path: Path, fixtures:
 
     # --- Telegram: heartbeat at 09:25 and the EOD report at 16:20, both through saa.outbox
     enq = [b for fn, b in http.calls if fn == "saa_enqueue"]
-    assert len(enq) == 2 and enq[0]["p_kind"] == "system" and enq[0]["p_text"].startswith("SAA daemon ▸ Mon 2026-09-28 · v0.2.0 · testmac")
+    assert len(enq) == 2 and enq[0]["p_kind"] == "system" and enq[0]["p_text"].startswith("SAA daemon ▸ Mon 2026-09-28 · v0.3.0 · testmac")
     assert "sandbox ok (acct …1234, Margin, options Basic) | Data: prod DXLink ok" in enq[0]["p_text"]
     assert "Universe: SPY QQQ IWM + 2 names (NVDA TSLA)" in enq[0]["p_text"] and "Econ today: Dallas Fed 10:30" in enq[0]["p_text"]
     assert "VIX 14.9 · 1D 12.5 · 9D 12.8 · 3M 17.9 (contango)" in enq[0]["p_text"]

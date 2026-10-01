@@ -127,12 +127,39 @@ data plane and **places no orders**. It reads the same `.env`.
    `daemon:session` carries the same numbers.
 4. Optional: let launchd start it at 9:10 every weekday — instructions in the header of
    `agent/daemon/deploy/com.saa.daemon.plist`. It only helps while the Mac is awake; the VPS (M5) is
-   what removes that dependency.
+   what removes that dependency. **Known catch (seen 2026-10-01 09:19 ET):** macOS refuses to let a
+   LaunchAgent read anything in `~/Desktop` (`run.sh: Operation not permitted` in `state/logs/launchd.err.log`),
+   because background agents do not inherit Terminal's folder permission. Either give `/bin/bash` Full Disk Access
+   (System Settings → Privacy & Security → Full Disk Access → + → ⌘⇧G → `/bin/bash`), then `launchctl kickstart -k
+   gui/$(id -u)/com.saa.daemon` to test — or keep running `./run.sh session` by hand from Terminal, which is unaffected.
 
 `./run.sh check` prints readiness by key name (never a value). Logs and the SQLite state live under
 `agent/daemon/state/`. `agent/daemon/README.md` explains everything the daemon writes.
 
 ## 6. Still in `.env` (not needed until later)
 
-`ANTHROPIC_API_KEY` (M3 — daemon judgment calls). `TT_PROD_*` is used from M2 on for **market data
+`ANTHROPIC_API_KEY` (M4+ — daemon judgment calls). `TT_PROD_*` is used from M2 on for **market data
 only** (read-only); live orders on the production account are M5.
+
+## 7. M3 — the rules engine rides along (nothing new to configure)
+
+The redeployed daemon (v0.3.0) runs the rules engine inside the same `./run.sh session`. It reads the morning brief's
+checklists and the Tier 2 rules from Supabase, evaluates the six gates once a minute, and keeps a **shadow ledger
+marked at real DXLink bids** — still no orders. What you will notice:
+
+- `./run.sh smoke` has two new rows: `feed_lag` (real-time vs 15-minute delayed) and `engine` (rules version, today's
+  checklists, the posterior, "live eval ON/OFF").
+- The 9:25 heartbeat gets an `Engine:` line. **If it says "observe-only (feed DELAYED …)" the engine will not open a
+  single shadow trade that day** — the production DXLink feed on your account was measured 15 minutes delayed on
+  2026-09-28, and decisions on stale quotes would be fiction. Resolving that entitlement with tastytrade (funded /
+  settled account? token `level`?) is the open question that unlocks M3's live evaluation; everything else is built
+  and tested offline.
+- When the feed is real-time: a Telegram line per gate-fired shadow open/close ("SHADOW open ▸ SPY long .SPY… ×1 @ 1.16
+  (R $116, floor) · open · 6/6 gates · p=0.32 · stop 10:00"), at most 20 a day; fast-lane hypotheses stay silent and
+  show up in the EOD report. The EOD report gets three engine lines (evaluations / fired / closed, shadow R, top
+  stand-down reasons).
+- `./run.sh replay state/recordings/<run>.jsonl --engine` replays any session deterministically (same file → same
+  sha256). `./run.sh kelly-table` prints the sizing table; `./run.sh rules` the parameters in force.
+
+Sizing is at the one-contract floor until the ledger has trades (the posterior starts shrunk to breakeven — plan §3),
+and the 10-day M1 record streak remains the gate before any sizing above the floor is trusted.

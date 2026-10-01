@@ -3,6 +3,70 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D19 (2026-10-01) — Live evaluation is gated on a real-time feed; everything else in M3 is testable offline
+
+- **Context:** the production DXLink feed measured 15 minutes delayed on 2026-09-28 (open question, cause unconfirmed). A
+  decision made on a 900-second-old quote is fiction; a shadow ledger marked on stale bids would mis-measure p and W.
+- **Chose:** the engine takes `feed_lag.mode` as an input every tick. In a live session (`require_realtime=True`, not
+  configurable from `.env`) it opens nothing — gate path or fast lane — unless the mode is `realtime` (median exchange→receipt
+  delay of underlying trades < 30 s); it records one `feed_not_realtime` journal row per symbol per window and the heartbeat /
+  EOD say "observe-only". Positions already open keep being managed on whatever marks arrive (closing is better than
+  abandoning). Offline — tests, `replay --engine --eval` — the gate can be lifted, and a pre-M3 recording replays with the
+  recording's own lag mode, so the whole engine (property tests, deterministic replay, Kelly table) is exercised without a
+  live feed. M3 code is therefore complete while the entitlement question stays open; its *live* evidence waits on real-time data.
+- **Revisit if:** tastytrade confirms the account entitlement is real-time (then the first live engine day is the evidence) or
+  a different real-time source is adopted (then `MarketState.feed_lag()` is the only place that changes).
+
+## D18 (2026-10-01) — Engine ticks once a minute on a recorded mark digest; live == replay by construction
+
+- **Context:** the spec wants a replay of recorded sessions to be deterministic. D12 kept the recording at underlying-level
+  events (option quotes are ~300 MB/day), so a replay had no option marks; and a trail evaluated on every 2-second quote
+  cannot be reproduced from any recording that is not the full option tape.
+- **Chose:** the engine decides on one **mark digest** per underlying per minute (the planned options within ±1.5 % of spot,
+  `[bid, ask, iv, delta, gamma, theta, oi, volume, quote_ms, recv_ms]`), taken 2 s into the minute — after the previous bar
+  completes — and written to the recording as `OptMarks` + `Tick` (feed mode, VIX, gamma proxies, universe) *before* the
+  engine sees them; `Meta` (rules, checklists, account, k, history, cooling-off) and `Plan` (chains) are recorded at start.
+  Replay feeds the same records in the same order to a fresh `MarketState` + `Engine`, so the live and replayed decisions,
+  ledger and state are byte-identical (`test_engine_session_sim.py` proves it on a full simulated day). Cost: ~40 MB/day of
+  digests on a 14-name universe; the trail reacts at most once a minute (bars are 1-minute; the theta clock is in minutes —
+  the plan's exits are bar- and window-based, not tick-based). The HWM of the 2-second marks is *not* recorded.
+- **Revisit if:** the ledger shows trail exits losing materially versus intraminute marks (then record a 15-second digest, or
+  the HWM between ticks, and tick faster) or the recording size binds on the VPS disk.
+
+## D17 (2026-10-01) — Engine inputs and window semantics: brief checklists are Tier 3, every in-session calendar event is a release
+
+- **Context:** the six gates need a catalyst and a direction the daemon cannot measure (that is Claude's 7:40 job), and the
+  Tier 1 clock rules need to know which scheduled releases the day holds.
+- **Chose:** (a) today's `saa.checklists` rows (via `saa_checklists_today`) are the engine's Tier 3 input — gates 1 and 5
+  (and 3–4 for single names) come from them; a symbol without a checklist stands down in every gate window; a `two_sided`
+  checklist opens one contract per leg. The checklist for a window is matched by `window_start ≤ now < window_end`, else by
+  `window_kind`. (b) Every event in `saa.calendar_days.econ` with an in-session time is a scheduled release: blackout T−15…T
+  (flat, no entries), entries T+5…T+15, stop T+55, FOMC adds the presser window at T+30; a pre-market release (CPI/NFP 08:30)
+  makes a data day (open-window entries from 09:35). The brief's own `econ` entries (e.g. a 10:30 regional Fed survey) are
+  therefore blackouts too — conservative on purpose. (c) Fast lanes obey the Tier 1 clock (dead zone, blackouts, last 5 min)
+  but not the day rails (daily stop, lockout): hypotheses keep measuring with zero capital; they never enter the posterior or
+  the halt windows. (d) The gate path fires at most one position per symbol per window per day; a fast lane at most one
+  shadow per symbol/lane/direction per day. (e) Alerts: gate-fired opens/closes only, ≤ 20/day (`saa.rules.max_alerts_per_day`).
+- **Revisit if:** the Friday review wants minor calendar events excluded from blackouts (add a `kind` filter — the calendar
+  rows already carry `kind`), or wants fast-lane shadows throttled differently.
+
+## D16 (2026-10-01) — Tier 1 is code; Tier 2 is the versioned `saa.rules` table (v2 seeded by the build)
+
+- **Context:** plan §3 says Tier 1 is "not overridable by Claude or by Ryan mid-session". The v1 rules row from intake
+  mixed Tier 1 numbers (daily stop, lockout, cooling-off, dead zone, spread filter) with Tier 2 edge parameters, which would
+  have let a Friday-review `saa.rules` insert change survival rails.
+- **Chose:** `saa_daemon/engine/tier1.py` holds the rails as a frozen dataclass (k ∈ [0.5, 1.0], shrinkage n0 = 30, prior
+  30 %/5R, ε = 0.5 %, floor while account < $2k and premium ≤ $150, caps ≤ 2 contracts per $1k and ≤ 50 % of account per
+  order, edge-loss halt 30/60, daily −3R, 3-loss lockout, cooling-off ≥ +5R win / ≥ +8R day → half size, no entries
+  11:30–13:30, release blackout 15 min, out by close − 5 min, spread 5 % flag / 10 % skip). `Rules.from_params` refuses
+  those keys from data (logged, listed in the heartbeat). Migration 0007 inserts rules **v2** carrying only Tier 2 keys —
+  every v1 edge value unchanged (bank 7.5 %, trail 30 %/20 % at +3R, 0.5σ OTM, lanes, promotion gate) plus the new
+  engine parameters (windows, gate thresholds, mechanism exits, max concurrent 3, alert cap 20, mark window 1.5 %). This is
+  a build change, not a review change (the Tier 2 policy of one evidence-based change per week is untouched). Changing a
+  Tier 1 value is a spec addendum.
+- **Revisit if:** M6's k ratchet (0.5 → 1.0 at a review) needs `kelly_k` to move — it lives in `saa.settings.kelly_k`,
+  clamped to the Tier 1 range in code, which is the intended path.
+
 ## D15 (2026-09-27) — Spot prices come from DXLink; tastytrade REST market data is a fallback only
 
 - **Context:** the second real smoke run (18:19 ET) showed `/market-data/by-type` and `/market-data/equity/<sym>` answer

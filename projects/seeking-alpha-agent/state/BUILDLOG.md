@@ -2,6 +2,94 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-10-01 — session 6 ("M3 build": rules engine + Kelly sizing + shadow ledger on real marks — built and verified offline)
+
+- **Ruling applied:** M2 stays `in-progress` until Ryan's full-day session run (Friday 2026-10-02) is verified. M3 was built to be
+  fully testable offline and gates its *live* evaluation on `feed_lag.mode == realtime` (D19), because the production DXLink feed
+  measured 15 minutes delayed on 2026-09-28 (open question, still open).
+- **Did:**
+  - New package `src/daemon/saa_daemon/engine/` (v0.3.0): `tier1.py` (frozen survival rails — D16), `rules.py` (Tier 2 from
+    `saa.rules`, Tier 1 keys refused), `windows.py` (open / mid / dead zone / afternoon / last hour, per-release blackout +
+    event + FOMC presser windows, data-day open, early close; theta clock √time), `triggers.py` (ORB, VWAP reclaim/loss,
+    first-hour continuation, RVOL-with-baseline, realized vol, failed extreme, volume taper), `gates.py` (six gates, STAND DOWN
+    default), `kelly.py` (f*, growth, prior-mixed + breakeven-shrunk posterior, whole-contract sizing with floor/caps/halt
+    modes, the plan table), `rails.py` (edge-loss halt 30/60, daily −3R, 3-loss lockout, cooling-off), `positions.py`
+    (entry at ask, marks at bid, bank at +7.5 % of account then trail 30 % → 20 % latched at +3R with a 1-minute option ATR
+    floor, mechanism exits, time stops), `engine.py` (the minute tick, journal, ledger, alerts, canonical bytes), `replay.py`
+    (deterministic replay of a recording, synthesized ticks for pre-M3 files). `market.py` extracted the shared MarketState
+    (bars/options/spots/lag) + the mark digest; `OptState` gained `recv_ms`, `two_sided`, `spread_frac`.
+  - Daemon integration: engine loaded at prep from `saa_rules_latest` / `saa_checklists_today` / `account_size` / `kelly_k` /
+    `saa_engine_ledger` / cooling-off flag; engine tick 2 s into every minute from 09:25 to the final tick at 16:20 (closes
+    anything still open); recorder now writes `Meta`, `Plan`, `OptMarks`, `Tick` records in the event stream (the daemon
+    records in `on_event`, feed-independent — D18); SQLite `engine_trades` + `engine_decisions` with mirrored flags; mirror
+    flushes to `saa_engine_shadow_upsert` / `saa_engine_decisions_insert`; heartbeat `Engine:` line; EOD gets three engine
+    lines; `run_log daemon:session` carries the engine summary; Telegram `alert` on gate-fired opens/closes (≤ 20/day);
+    cooling-off persisted to SQLite kv + `saa.settings.engine_cooling_off_after`. CLI: `replay --engine [--out] [--eval]`,
+    `kelly-table`, `rules`; smoke gained `feed_lag` mode capture and an `engine` row.
+  - Migration `0007_engine_ledger.sql` **applied** (part 1): `saa.shadow_trades` engine columns + unique `engine_key`, table
+    `saa.engine_decisions` (RLS on), rules **v2** (Tier 2 keys only, every v1 edge value unchanged — D16), RPCs
+    `saa_rules_latest`, `saa_checklists_today`, `saa_engine_ledger`, `saa_engine_shadow_upsert`, `saa_engine_decisions_insert`
+    (service_role only). Part 2 (engine_decisions retention in the housekeeping cron) **pending**: the Supabase MCP tool cancels
+    statements containing `delete`; the exact `cron.alter_job` call is in the migration file for the SQL editor.
+  - Docs: daemon README rewritten for M3; SETUP.md §5 catch + new §7; plist header carries the launchd fix. DECISIONS D16–D19.
+- **Verified (evidence):**
+  - `python3 -m pytest src/tests -q` → **86 passed, 1 skipped** (the real-recording fixture; see below) in ~30 s; pyflakes clean.
+    New: `test_engine_kelly.py` (12: plan §0.3 → 6/16/24 %, growth 0.7/5.4/13.4 %/trade, $5M by trade 64 full / 80 half,
+    n = 0 → ε·(1+1/W) → floor, un-shrinks monotonically, negative edge → f* 0; Hypothesis: 400 random (account, premium, p, W,
+    k, halt, cooling) cases never exceed full Kelly except the documented floor, caps always hold, k clamped),
+    `test_engine_rails.py` (17: each Tier 1 rail attacked through the live engine path with everything else green —
+    clock at every minute of the day, FOMC blackout no-entry + forced flat at 13:45, daily stop without a 3-loss streak,
+    3-loss lockout without the daily stop, cooling-off → half size next session, edge-loss floor (30 losers) and stop (60),
+    every entry's time stop ≤ window edge and honoured, spread filter across 0.5–40 %, feed gate for DELAYED/unknown,
+    STAND-DOWN default without a checklist, any single failing gate, concurrency cap 3), `test_engine_core.py` (12: rules
+    v1-row compat + Tier 1 refusal + validation, window schedule incl. data day / FOMC presser / early close, theta clock
+    table 0.920/0.734/0.620/0.392, native triggers, six gates index vs single name vs event window, bank-then-trail-then-
+    tighten with partial bank (3 contracts: bank 2 at 1.60, run 1, exit trail +1.2R), time stop/expiry/void/full loss,
+    mechanism exits, canonical output byte-stable), `test_engine_replay.py` (7 + 1 skipped: 5 synthetic recordings replayed
+    twice → identical sha256 each, five different sessions → five hashes, an in-session tick flipped to DELAYED changes the
+    hash, a pre-M3 events-only recording replays with synthesized ticks and reports DELAYED), `test_engine_session_sim.py`
+    (2 full days through the real daemon loop: **live == replay** — the session's own recording replayed reproduces
+    `decisions`, `ledger` and `state` byte for byte; SPY ORB on 2.5× volume at 09:36 → 6/6 gates at 09:37:02 → 1 ×
+    .SPY260928C654 @ 1.16 at the floor → +0.99R at the 10:00 time stop; TSLA stands down on direction, NVDA on trigger;
+    2 fast-lane shadows; every position closed by the final tick; 76 ledger upserts + the whole journal through the RPCs;
+    alerts "SHADOW open ▸ SPY long .SPY260928C654 ×1 @ 1.16 (R $116, floor) · open · 6/6 gates · p=0.32 · stop 10:00" /
+    "SHADOW close ▸ … +0.99R (time_stop)"; heartbeat "Engine: LIVE eval · rules v2 · acct $1,000 k=0.50 · posterior n=0
+    p=0.172 W=5.0 f*=0.006 → floor · halt none · 4 fast lanes"; **the same day with trades stamped 900 s late: observe-only
+    all day, 0 shadows, every journal row `feed_not_realtime`**, heartbeat "observe-only (feed DELAYED 900s)").
+  - CLI on a fresh unpacked copy of the deploy bundle (own venv): `check` redacts, `rules` (defaults with the mirror off),
+    `kelly-table` prints the plan table, `replay synthetic-1.jsonl --engine` twice → sha256
+    `f929c188e503867714950a1fc1539dc412e1358ebcc45d07e6295457599392ff` both times, `--out` files `cmp`-identical, and the same
+    hash as the in-repo run.
+  - Supabase (connector): rules max version 2; RPC round trip inside a rolled-back block — `saa_rules_latest` → v2,
+    `saa_checklists_today('2026-10-01')` → 5 rows, `saa_engine_shadow_upsert` insert then update of the same `engine_key`
+    (status open → closed, r_result 0.9914, expiry 20:00Z = 16:00 ET), `saa_engine_ledger(5)` returns the closed trade,
+    `saa_engine_decisions_insert` → 1 with the payload intact; no rows left behind; grants = service_role only; security
+    advisor shows only the intentional RLS-no-policy INFO (now 19 tables).
+  - Supabase state worth knowing: `saa.v_daily_records` shows **4 complete days 09-28 → 10-01** (the M1 streak is 4/10); the
+    09-28 run row is still `running` (last_seen 13:47 ET — the Mac lost network/slept; the local SQLite finished the run and
+    its queued `daemon:session` row will flush on the next run); 21 checklists, 1 modeled shadow trade so far.
+- **Findings from the Mac (linked briefly at session start):** the launchd agent fired today at 09:19 ET and was refused —
+  `launchd.err.log`: `run.sh: Operation not permitted` (macOS TCC: a LaunchAgent cannot read `~/Desktop`); the manual
+  `./run.sh session` from Terminal is unaffected. Fix documented in the plist header and SETUP §5 (Full Disk Access for
+  `/bin/bash`). The 09-28 session log ends with `unhandled=0 errors={'halts': 60, 'feed': 62}` — the Mac lost DNS from ~15:26
+  ET (mirror / Telegram retries) and slept (a snapshot tick scheduled for 15:10 ran at 16:04), which is what `caffeinate` in
+  `run.sh` now prevents. Recording `2026-09-28-131736-session.jsonl`: 60,080 underlying-level events.
+- **Not done this session:** the Mac link dropped after the first minutes and did not come back — the deploy bundle
+  (`saa-daemon-v0.3.0.tgz`, 42 files, sha256 list in the session) was handed to Ryan instead of committed to
+  `agent/daemon/` (checksums to verify on the Mac are in the chat), and the real 09-28 recording could not be staged, so
+  `test_real_2026_09_28_recording_replays_deterministically` is skipped until the fixture
+  `src/tests/fixtures/recording-2026-09-28-SPY-QQQ-IWM.jsonl.gz` exists (trim + gzip command in the next_action).
+- **Acceptance (spec M3) walked:** (1) property tests for every Tier 1 rail — `test_engine_rails.py` + `test_engine_kelly.py`
+  ✓; (2) replay of ≥ 5 recorded sessions deterministic, byte-identical — 5 synthetic + the simulated session's own
+  recording (live == replay) ✓ (the real 09-28 file joins when staged); (3) Kelly tests reproduce the plan table ✓.
+  Milestone 3 marked done; milestone 2 stays in-progress per Ryan.
+- **Stopped at:** M3 complete offline; waiting on Ryan's Friday session (M2 acceptance) and the market-data entitlement
+  (M3 live evaluation). Resume point in `next_action`.
+- **Lessons:** the Supabase MCP tool treats any statement containing `delete` as destructive and cancels it without an
+  interactive approval — put retention changes in their own step and expect to run them from the SQL editor. The device
+  bridge can drop for the rest of a session; stage anything needed from the Mac in the first minutes and keep a deliverable
+  path (tarball + checksums) ready.
+
 ## 2026-09-28 — session 5 (first live session run, started late; 15-minute delayed feed found)
 
 - **Did:** Ryan started `./run.sh session` at 13:17:36 ET (late). Observed live through the Supabase connector and the

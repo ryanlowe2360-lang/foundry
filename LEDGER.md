@@ -1,6 +1,6 @@
 # Foundry Ledger
 
-*Generated 2026-09-28T17:37:23Z by `scripts/foundry.py ledger` — do not edit by hand.*
+*Generated 2026-10-01T18:04:46Z by `scripts/foundry.py ledger` — do not edit by hand.*
 
 ## 🙋 Needs you
 
@@ -10,8 +10,8 @@
 
 | Project | Status | Milestones | Idle | Next action |
 |---|---|---|---|---|
-| **Pocket Notes** (`pocket-notes`) *(example)* | building 🔥 | 2/4 done | 89d | Start M3: add an &lt;input id="search"&gt; above the note list in src/index.html and filter renderList() by t… |
-| **Seeking Alpha Agent — Autonomous Intraday Options Agent** (`seeking-alpha-agent`) | building | 1/6 done | 0d | Close M2 (daemon data plane): smoke passed twice; the 2026-09-28 live run started late (13:17) so it is a sha… |
+| **Pocket Notes** (`pocket-notes`) *(example)* | building 🔥 | 2/4 done | 92d | Start M3: add an &lt;input id="search"&gt; above the note list in src/index.html and filter renderList() by t… |
+| **Seeking Alpha Agent — Autonomous Intraday Options Agent** (`seeking-alpha-agent`) | building | 2/6 done | 0d | Two Ryan steps, then M4. (1) Close M2: Friday 2026-10-02 before 09:20 ET, Mac awake, Terminal: cd "$HOME/Desk… |
 
 ---
 *2 project(s) · 2 in flight · 1 stale (≥7d) · 0 unprocessed inbox doc(s).*

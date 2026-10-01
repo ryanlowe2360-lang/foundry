@@ -133,6 +133,7 @@ async def run_smoke(settings: Settings, *, telegram: bool = True) -> int:
                 lags.sort()
                 med = lags[len(lags) // 2]
                 detail["feed_lag_s"] = round(med, 1)
+                detail["feed_lag_mode"] = "realtime" if med < 30 else "DELAYED"
                 rep.add("feed_lag", "PASS" if med < 30 else "WARN", f"median {med:.0f}s between exchange time and receipt" +
                         (" — 15-MINUTE DELAYED DATA (account/entitlement, not the daemon)" if med > 600 else " — real-time" if med < 30 else ""))
             else:
@@ -172,6 +173,33 @@ async def run_smoke(settings: Settings, *, telegram: bool = True) -> int:
         rep.add("sqlite", "PASS", str(store.path))
     except Exception as e:  # noqa: BLE001
         rep.add("sqlite", "FAIL", f"{type(e).__name__}: {str(e)[:120]}")
+
+    # Engine (M3): rules + checklists reachable, Kelly table reproduces the plan, the mark gate on the lag just measured
+    try:
+        from .engine.kelly import kelly_fraction, posterior
+        from .engine.rules import Rules
+
+        rules = Rules.default()
+        n_cl = None
+        if mirror.enabled:
+            row = await mirror.rules_latest()
+            if row:
+                rules = Rules.from_row(row)
+            n_cl = len(await mirror.checklists_today())
+            hist = await mirror.engine_ledger(60)
+        else:
+            hist = []
+        post = posterior([float(r["r_result"]) for r in hist if r.get("r_result") is not None])
+        table_ok = [round(kelly_fraction(p_, w_) * 100) for p_, w_ in ((0.25, 4), (0.30, 5), (0.35, 6))] == [6, 16, 24]
+        lag_mode = detail.get("feed_lag_mode") or "unknown"
+        rep.add("engine", "PASS" if table_ok else "FAIL",
+                f"rules v{rules.version}" + (f" ({len(rules.ignored)} Tier 1 keys ignored)" if rules.ignored else "") +
+                (f" · {n_cl} checklists today" if n_cl is not None else " · checklists n/a (mirror off)") +
+                f" · ledger n={post.n} p={post.p:.3f} W={post.w:.1f} f*={post.f_full:.3f}" + (" → floor" if post.n == 0 else "") +
+                f" · Kelly table {'ok' if table_ok else 'MISMATCH'} · live eval {'ON' if lag_mode == 'realtime' else 'OFF (feed ' + lag_mode + ')'}")
+        detail.update(rules_version=rules.version, engine_posterior_n=post.n)
+    except Exception as e:  # noqa: BLE001
+        rep.add("engine", "FAIL", f"{type(e).__name__}: {str(e)[:120]}")
 
     # Supabase write
     if mirror.enabled:

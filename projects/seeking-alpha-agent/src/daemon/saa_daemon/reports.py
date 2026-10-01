@@ -49,9 +49,30 @@ def heartbeat_text(ctx: dict[str, Any]) -> str:
         _vix_line(ctx.get("vix")),
         _gamma_line("SPY pre-open", ctx.get("gamma")),
         f"Halts so far: {ctx.get('halts', 0)} · Econ today: {'; '.join(econ) if econ else '—'}",
-        f"Mirror: {'Supabase on' if ctx.get('mirror') else 'OFF (SQLite only)'} · no orders in M2",
+        _engine_heartbeat_line(ctx.get("engine"), lag),
+        f"Mirror: {'Supabase on' if ctx.get('mirror') else 'OFF (SQLite only)'} · shadow trades only, no orders (M3)",
     ]
     return "\n".join(lines)
+
+
+def _engine_heartbeat_line(eng: dict[str, Any] | None, lag: dict[str, Any]) -> str:
+    """engine state → one line: rules version, account, k, posterior, size mode, rails, feed gate."""
+    if not eng:
+        return "Engine: not loaded"
+    post, rails, rules = eng.get("posterior") or {}, eng.get("rails") or {}, eng.get("rules") or {}
+    n = post.get("n", 0)
+    if not eng.get("require_realtime") or lag.get("mode") == "realtime":
+        mode = "LIVE eval"
+    elif lag.get("mode") == "DELAYED":
+        mode = f"observe-only (feed DELAYED {lag.get('lag_s', 0):.0f}s)"
+    else:
+        mode = "feed lag not measured yet (real-time required to evaluate)"
+    halt = rails.get("halt_mode", "none")
+    bits = [f"Engine: {mode}", f"rules v{rules.get('version', '?')}", f"acct ${eng.get('account', 0):,.0f} k={eng.get('kelly_k', 0):.2f}",
+            f"posterior n={n} p={post.get('p', 0):.3f} W={post.get('w', 0):.1f} f*={post.get('f_full', 0):.3f}" + (" → floor" if n == 0 else ""),
+            f"halt {halt}" if halt != "none" else "halt none", "cooling-off ½ size" if rails.get("cooling_off_today") else "",
+            f"{len(rules.get('lanes_on') or [])} fast lanes"]
+    return " · ".join(b for b in bits if b)
 
 
 def eod_text(stats: dict[str, Any]) -> str:
@@ -88,7 +109,30 @@ def eod_text(stats: dict[str, Any]) -> str:
         f"Halts: {len(halts)}" + (f" ({halt_desc})" if halts else ""),
         f"Feed: {feed.get('events', 0):,} events · {feed.get('reconnects', 0)} reconnects · lag {_f(feed.get('lag_s'), 0)}s"
         + (" ⚠ DELAYED DATA" if feed.get("mode") == "DELAYED" else (" real-time" if feed.get("mode") == "realtime" else "")) + f" · errors caught: {err_desc}",
-        f"Mirror: {'on' if m.get('enabled') else 'OFF'} · {pushed.get('bars', 0):,} bar upserts · {pushed.get('snapshots', 0)} snapshots · {pushed.get('vix', 0)} vix · queue {m.get('queue', 0)} · failures {m.get('failures', 0)}",
+        f"Mirror: {'on' if m.get('enabled') else 'OFF'} · {pushed.get('bars', 0):,} bar upserts · {pushed.get('snapshots', 0)} snapshots · {pushed.get('vix', 0)} vix"
+        + (f" · {pushed.get('engine_trades', 0)} ledger rows" if pushed.get("engine_trades") else "") + f" · queue {m.get('queue', 0)} · failures {m.get('failures', 0)}",
         f"Telegram: {tg_desc}",
     ]
+    lines[7:7] = _engine_eod_lines(stats.get("engine"), feed)
     return "\n".join(lines)
+
+
+def _engine_eod_lines(eng: dict[str, Any] | None, feed: dict[str, Any]) -> list[str]:
+    if not eng:
+        return ["Engine: not loaded"]
+    c, pos, rails, post = eng.get("counts") or {}, eng.get("positions") or {}, eng.get("rails") or {}, eng.get("posterior") or {}
+    sd = eng.get("stand_down_reasons") or {}
+    top = ", ".join(f"{k} {v}" for k, v in sorted(sd.items(), key=lambda kv: -kv[1])[:4]) or "none"
+    observe, entry_ticks = eng.get("observe_only_ticks", 0), eng.get("entry_ticks", 0)
+    gate_mode = (f"OBSERVE-ONLY all day (feed {feed.get('mode')})" if observe and entry_ticks and observe >= entry_ticks
+                 else (f"observe-only {observe}/{entry_ticks} ticks" if observe else "live eval"))
+    day = rails.get("day") or {}
+    lines = [
+        f"Engine: rules v{(eng.get('rules') or {}).get('version', '?')} · {gate_mode} · {c.get('evaluations', 0)} gate evaluations · {c.get('fired', 0)} fired · "
+        f"{c.get('fast_lane_opens', 0)} fast-lane shadows · {c.get('closes', 0)} closed · {pos.get('void', 0)} void",
+        f"Shadow R: gate {eng.get('today_gate_r', 0):+.2f}R ({day.get('wins', 0)}W/{day.get('losses', 0)}L) · fast-lane {eng.get('today_fast_lane_r', 0):+.2f}R · "
+        f"posterior n={post.get('n', 0)} p={post.get('p', 0):.3f} W={post.get('w', 0):.1f} · halt {rails.get('halt_mode', 'none')}"
+        + (" · cooling-off next session" if rails.get("cooling_off_triggered") else ""),
+        f"Stand-downs: {top}",
+    ]
+    return lines

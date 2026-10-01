@@ -41,6 +41,14 @@ create table if not exists runs (
 create table if not exists kv (key text primary key, value text not null);
 create table if not exists events_log (
   id integer primary key autoincrement, ts text not null, level text not null, task text not null, message text not null);
+create table if not exists engine_trades (
+  engine_key text primary key, trade_date text not null, run_id text not null, symbol text not null, source text not null,
+  status text not null, r_result real, payload text not null, updated_at text not null, mirrored integer not null default 0);
+create index if not exists engine_trades_dirty on engine_trades (mirrored);
+create table if not exists engine_decisions (
+  id integer primary key autoincrement, ts text not null, trade_date text not null, run_id text not null, symbol text not null,
+  kind text not null, decision text not null, reason text not null, payload text not null, mirrored integer not null default 0);
+create index if not exists engine_decisions_dirty on engine_decisions (mirrored);
 """
 
 
@@ -267,6 +275,55 @@ class Store:
         d = dict(r)
         d["stats"] = json.loads(d["stats"])
         return d
+
+    # ---------------------------------------------------------------- engine
+    def upsert_engine_trade(self, row: dict[str, Any], run_id: str, now: datetime) -> None:
+        """One shadow-ledger row (Position.row()); re-upserted on every change, mirrored flag reset each time."""
+        with self.db:
+            self.db.execute(
+                """insert into engine_trades (engine_key, trade_date, run_id, symbol, source, status, r_result, payload, updated_at, mirrored)
+                   values (?,?,?,?,?,?,?,?,?,0)
+                   on conflict(engine_key) do update set status=excluded.status, r_result=excluded.r_result, payload=excluded.payload,
+                     updated_at=excluded.updated_at, mirrored=0""",
+                (row["engine_key"], row["trade_date"], run_id, row["symbol"], row["engine_source"], row["status"], row.get("r_result"),
+                 json.dumps(row, separators=(",", ":"), default=str), iso(now)))
+
+    def dirty_engine_trades(self, limit: int = 200) -> list[dict[str, Any]]:
+        rows = [dict(r) for r in self.db.execute("select * from engine_trades where mirrored = 0 order by updated_at limit ?", (limit,))]
+        for r in rows:
+            r["payload"] = json.loads(r["payload"])
+        return rows
+
+    def mark_engine_trade_mirrored(self, engine_key: str, updated_at: str) -> None:
+        with self.db:
+            self.db.execute("update engine_trades set mirrored = 1 where engine_key = ? and updated_at = ?", (engine_key, updated_at))
+
+    def engine_trades(self, trade_date: str | None = None) -> list[dict[str, Any]]:
+        q = "select * from engine_trades" + (" where trade_date = ?" if trade_date else "") + " order by engine_key"
+        rows = [dict(r) for r in self.db.execute(q, (trade_date,) if trade_date else ())]
+        for r in rows:
+            r["payload"] = json.loads(r["payload"])
+        return rows
+
+    def insert_engine_decisions(self, rows: Iterable[dict[str, Any]], trade_date: str, run_id: str) -> int:
+        n = 0
+        with self.db:
+            for d in rows:
+                self.db.execute("insert into engine_decisions (ts, trade_date, run_id, symbol, kind, decision, reason, payload, mirrored) values (?,?,?,?,?,?,?,?,0)",
+                                (d["ts"], trade_date, run_id, d["symbol"], d["kind"], d["decision"], d["reason"][:400], json.dumps(d, separators=(",", ":"), default=str)))
+                n += 1
+        return n
+
+    def dirty_engine_decisions(self, limit: int = 500) -> list[dict[str, Any]]:
+        rows = [dict(r) for r in self.db.execute("select * from engine_decisions where mirrored = 0 order by id limit ?", (limit,))]
+        for r in rows:
+            r["payload"] = json.loads(r["payload"])
+        return rows
+
+    def mark_engine_decisions_mirrored(self, ids: Iterable[int]) -> None:
+        with self.db:
+            for i in ids:
+                self.db.execute("update engine_decisions set mirrored = 1 where id = ?", (i,))
 
     # -------------------------------------------------------------------- kv
     def set_kv(self, key: str, value: str) -> None:

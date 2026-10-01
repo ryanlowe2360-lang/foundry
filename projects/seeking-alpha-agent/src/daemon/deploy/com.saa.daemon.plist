@@ -4,7 +4,11 @@
                 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.saa.daemon.plist
      Remove:    launchctl bootout gui/$(id -u)/com.saa.daemon
      Run now:   launchctl kickstart -k gui/$(id -u)/com.saa.daemon
-     The daemon exits on its own at 16:25 ET; launchd starts it again the next weekday. Logs: agent/daemon/state/logs/ -->
+     The daemon exits on its own at 16:25 ET; launchd starts it again the next weekday. Logs: agent/daemon/state/logs/
+     KNOWN CATCH (2026-10-01): macOS TCC refuses a LaunchAgent in ~/Desktop ("run.sh: Operation not permitted" in
+     launchd.err.log) because background agents don't inherit Terminal's folder grant. Fix: System Settings → Privacy &
+     Security → Full Disk Access → + → ⌘⇧G → /bin/bash (then `launchctl kickstart -k gui/$(id -u)/com.saa.daemon` to test),
+     or run `./run.sh session` by hand from Terminal, which is unaffected. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>

@@ -1,34 +1,37 @@
 """The session orchestrator.
 
-One `Daemon.run_session()` = one trading day: log in, discover chains, stream, snapshot every 5 minutes,
-poll halts and VIX, heartbeat at 9:25, EOD report at close+20, stop at close+25. Every subsystem runs
-under `supervise()`, which catches, logs, counts and restarts — the acceptance criterion is *zero unhandled
-exceptions*, and the EOD report prints the caught ones so nothing is hidden.
+One `Daemon.run_session()` = one trading day: log in, discover chains, stream, snapshot every 5 minutes, poll halts and
+VIX, heartbeat at 9:25, run the rules engine once a minute (M3), EOD report at close+20, stop at close+25. Every
+subsystem runs under `supervise()`, which catches, logs, counts and restarts — the acceptance criterion is *zero
+unhandled exceptions*, and the EOD report prints the caught ones so nothing is hidden.
 
-All I/O components are injectable (clock, store, http, brokerage, feed, mirror, notifier) so the whole
-loop runs against fakes and a virtual clock in tests/test_daemon_session_sim.py.
+All I/O components are injectable (clock, store, http, brokerage, feed, mirror, notifier) so the whole loop runs
+against fakes and a virtual clock in tests/test_daemon_session_sim.py.
+
+M3: the engine ticks 2 s into every minute on the mark digest the recorder writes (`OptMarks` + `Tick` records), so a
+replay of the recording reproduces the live decisions byte for byte. Live evaluation is gated on
+`feed_lag.mode == realtime`; otherwise the engine runs observe-only and records why.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import socket
-import statistics
 import traceback
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Awaitable, Callable
 
 from . import __version__
-from .bars import BarBook
-from .chains import ChainPlan, OptionBook, build_snapshot, from_sdk_nested, plan_chain
-from .clock import Clock, Schedule, align_up, et, is_trading_day
+from .chains import ChainPlan, build_snapshot, from_sdk_nested, plan_chain
+from .clock import Clock, Schedule, align_up, et, floor_minute, is_trading_day, next_trading_day
 from .config import Settings
-from .events import CandleEvt, Evt, GreeksEvt, ProfileEvt, QuoteEvt, SummaryEvt, TradeEvt
-from .feed import Feed, FeedPlan
+from .engine import Engine, EngineConfig, EngineInputs, Rules
+from .events import Evt, ProfileEvt
+from .feed import Feed, FeedPlan, Recorder
 from .halts import fetch_halts, halt_from_profile
 from .http import HttpClient
+from .market import MarketState, plan_to_record
 from .mirror import MirrorError, SupabaseMirror
 from .reports import eod_text, heartbeat_text
 from .store import Store, iso
@@ -36,6 +39,8 @@ from .telegram import Notifier
 from .vix import fetch_vix_term
 
 log = logging.getLogger("saa.daemon")
+
+ENGINE_TICK_OFFSET_S = 2     # tick 2 s into the minute: the previous bar is complete, the first quotes of the new minute are in
 
 
 @dataclass
@@ -68,36 +73,69 @@ class Daemon:
         self._notifier = notifier
         self._trade_date = trade_date
         # runtime
-        self.bars = BarBook()
-        self.options = OptionBook()
-        self.plans: dict[str, ChainPlan] = {}
-        self.spots: dict[str, float] = {}
-        self.quotes: dict[str, dict[str, Any]] = {}
+        self.market = MarketState.new(on_profile=self._on_profile)
         self.errors: dict[str, int] = {}
         self.first_error: dict[str, str] = {}
         self.unhandled = 0
-        self.feed_events = 0
         self.feed_reconnects = 0
-        self.lag_samples: deque[float] = deque(maxlen=400)   # seconds between exchange time and receipt, underlying trades
         self.stop = asyncio.Event()
         self.stopping = False
         self.index_symbols: list[str] = list(settings.index_symbols)
         self.single_names: list[str] = []
-        self.econ_today: list[str] = []
+        self.econ_today: list[dict[str, Any]] = []
         self.vix_first: dict[str, Any] | None = None
         self.vix_last: dict[str, Any] | None = None
         self.gamma_open: dict[str, Any] | None = None
         self.gamma_last: dict[str, Any] | None = None
+        self.gamma_by_symbol: dict[str, dict[str, Any]] = {}
         self.snapshot_ticks_done = 0
         self.sched: Schedule | None = None
         self.run_id = ""
         self.started_at: datetime | None = None
         self.feed: Feed | None = None
         self.feed_plan = FeedPlan()
+        self.recorder: Recorder | None = None
+        # engine (M3)
+        self.engine: Engine | None = None
+        self.engine_meta: dict[str, Any] = {}
+        self.engine_ticks = 0
+        self._decisions_persisted = 0
+
+    # ---------------------------------------------------------------- market state passthroughs (tests + reports)
+    @property
+    def bars(self):
+        return self.market.bars
+
+    @property
+    def options(self):
+        return self.market.options
+
+    @property
+    def plans(self) -> dict[str, ChainPlan]:
+        return self.market.plans
+
+    @property
+    def spots(self) -> dict[str, float]:
+        return self.market.spots
+
+    @property
+    def quotes(self) -> dict[str, dict[str, Any]]:
+        return self.market.quotes
+
+    @property
+    def lag_samples(self):
+        return self.market.lag_samples
+
+    @property
+    def feed_events(self) -> int:
+        return self.market.feed_events
 
     # ------------------------------------------------------------------ helpers
     def now(self) -> datetime:
         return self.clock.now()
+
+    def now_ms(self) -> int:
+        return int(self.now().timestamp() * 1000)
 
     def _record_error(self, task: str, exc: BaseException) -> None:
         self.errors[task] = self.errors.get(task, 0) + 1
@@ -170,41 +208,15 @@ class Daemon:
 
     # ------------------------------------------------------------- event path
     def on_event(self, e: Evt) -> None:
-        self.feed_events += 1
-        if isinstance(e, CandleEvt):
-            self.bars.on_candle(e)
-        elif isinstance(e, QuoteEvt):
-            if e.symbol in self.feed_plan.underlyings:
-                q = self.quotes.setdefault(e.symbol, {})
-                q.update(bid=e.bid, ask=e.ask, bid_size=e.bid_size, ask_size=e.ask_size, ts=e.time_ms)
-                if e.bid and e.ask:
-                    self.spots[e.symbol] = (e.bid + e.ask) / 2.0
-            else:
-                self.options.on_quote(e)
-        elif isinstance(e, GreeksEvt):
-            self.options.on_greeks(e)
-        elif isinstance(e, SummaryEvt):
-            if e.symbol in self.feed_plan.underlyings:
-                q = self.quotes.setdefault(e.symbol, {})
-                q.update(day_open=e.day_open, prev_close=e.prev_close)
-            else:
-                self.options.on_summary(e)
-        elif isinstance(e, TradeEvt):
-            if e.symbol in self.feed_plan.underlyings:
-                if e.time_ms > 0:
-                    self.lag_samples.append(self.now().timestamp() - e.time_ms / 1000.0)
-                q = self.quotes.setdefault(e.symbol, {})
-                q.update(last=e.price, day_volume=e.day_volume)
-                if e.price and e.symbol not in self.spots:
-                    self.spots[e.symbol] = e.price
-            else:
-                self.options.on_trade(e)
-        elif isinstance(e, ProfileEvt):
-            q = self.quotes.setdefault(e.symbol, {})
-            q.update(trading_status=e.trading_status)
-            h = halt_from_profile(e)
-            if h:
-                self.store.upsert_halts([h])
+        now = self.now()
+        if self.recorder is not None:
+            self.recorder.maybe(e, int(now.timestamp() * 1000))
+        self.market.on_event(e, now)
+
+    def _on_profile(self, e: ProfileEvt) -> None:
+        h = halt_from_profile(e)
+        if h:
+            self.store.upsert_halts([h])
 
     # -------------------------------------------------------------- universe
     async def load_universe(self) -> None:
@@ -228,13 +240,17 @@ class Daemon:
                 log.warning("active symbols unavailable (%s)", e)
             try:
                 day = await self.mirror.calendar_day(self.sched.trade_date.isoformat() if self.sched else None)
-                self.econ_today = [f"{ev.get('event')} {ev.get('time_et') or ''}".strip() for ev in (day.get("econ") or []) if isinstance(ev, dict)]
+                self.econ_today = [ev for ev in (day.get("econ") or []) if isinstance(ev, dict)]
             except MirrorError:
                 pass
         self.index_symbols = idx
         self.single_names = names[: s.max_single_names]
         if len(names) > s.max_single_names:
             log.warning("universe capped: %d single names requested, keeping %d", len(names), s.max_single_names)
+
+    @property
+    def econ_lines(self) -> list[str]:
+        return [f"{ev.get('event')} {ev.get('time_et') or ''}".strip() for ev in self.econ_today]
 
     async def discover_chains(self, symbols: list[str]) -> FeedPlan:
         """Spots → nested chains → ChainPlans → the feed delta for these symbols."""
@@ -270,6 +286,9 @@ class Daemon:
                 log.warning("no live expirations for %s", sym)
                 continue
             self.plans[sym] = plan
+            self.market.underlyings.add(sym)
+            if self.recorder is not None:
+                self.recorder.write("Plan", plan_to_record(plan), self.now_ms())
             delta.options |= set(plan.symbols())
             delta.underlyings.add(sym)
             delta.candles.add(sym)
@@ -280,6 +299,7 @@ class Daemon:
         for sym, plan in list(self.plans.items()):
             snap = build_snapshot(plan, self.options, self.spots.get(sym), ts)
             self.store.insert_snapshot(ts, sym, snap["spot"], snap["expirations"], snap["summary"], snap["gamma"])
+            self.gamma_by_symbol[sym] = snap["gamma"]
             if sym == (self.index_symbols[0] if self.index_symbols else "SPY"):
                 self.gamma_last = snap["gamma"]
                 if self.gamma_open is None and self.sched and ts >= self.sched.open:
@@ -300,6 +320,126 @@ class Daemon:
                 await self.snapshot_all(tick)
             except Exception as e:  # noqa: BLE001
                 self._record_error("snapshot", e)
+
+    # ---------------------------------------------------------------- engine
+    async def load_engine(self) -> None:
+        """Build the M3 engine from saa.rules / today's checklists / account settings / the ledger history (D16–D18)."""
+        assert self.sched is not None
+        today = self.sched.trade_date
+        rules = Rules.default()
+        checklists: list[dict[str, Any]] = []
+        account, k = 1000.0, 0.5
+        history: list[float] = []
+        cooling_off = False
+        if self.mirror.enabled:
+            try:
+                row = await self.mirror.rules_latest()
+                if row:
+                    rules = Rules.from_row(row)
+            except (MirrorError, ValueError) as e:
+                log.warning("rules unavailable (%s); using built-in defaults", e)
+            try:
+                checklists = await self.mirror.checklists_today(today.isoformat())
+            except MirrorError as e:
+                log.warning("checklists unavailable (%s)", e)
+            for key, cast, setter in (("account_size", float, "account"), ("kelly_k", float, "k")):
+                try:
+                    v = await self.mirror.get_setting(key)
+                    if v:
+                        if setter == "account":
+                            account = cast(v)
+                        else:
+                            k = cast(v)
+                except (MirrorError, ValueError) as e:
+                    log.warning("setting %s unavailable (%s)", key, e)
+            try:
+                history = [float(r["r_result"]) for r in await self.mirror.engine_ledger(60) if r.get("r_result") is not None]
+            except (MirrorError, ValueError, TypeError) as e:
+                log.warning("engine ledger unavailable (%s)", e)
+            try:
+                co = await self.mirror.get_setting("engine_cooling_off_after")
+                if co:
+                    cooling_off = next_trading_day(date.fromisoformat(co[:10])) == today
+            except (MirrorError, ValueError) as e:
+                log.warning("cooling-off setting unavailable (%s)", e)
+        else:
+            co = self.store.get_kv("engine_cooling_off_after")
+            if co:
+                cooling_off = next_trading_day(date.fromisoformat(co[:10])) == today
+        cfg = EngineConfig(trade_date=today, account=account, kelly_k=k, index_symbols=tuple(self.index_symbols), require_realtime=True)
+        self.engine = Engine(cfg, rules, checklists=checklists, econ_events=self.econ_today, history_r=history, cooling_off=cooling_off)
+        self.engine_meta = {"trade_date": today.isoformat(), "account": account, "kelly_k": k, "index_symbols": list(self.index_symbols),
+                            "universe": self.index_symbols + self.single_names, "rules": {"version": rules.version, "params": rules.params,
+                                                                                         "evidence": rules.evidence, "ignored": list(rules.ignored)},
+                            "checklists": checklists, "econ": self.econ_today, "history_r": history, "cooling_off": cooling_off,
+                            "require_realtime": True, "version": __version__, "run_id": self.run_id}
+        if self.recorder is not None:
+            self.recorder.write("Meta", self.engine_meta, self.now_ms())
+        log.info("engine ready: rules v%d, account $%.0f, k=%.2f, %d checklists, %d prior trades, cooling-off=%s, %d econ events",
+                 rules.version, account, k, len(checklists), len(history), cooling_off, len(self.econ_today))
+
+    def _engine_universe(self) -> list[str]:
+        return sorted(self.plans)
+
+    async def engine_tick(self, now: datetime | None = None, *, final: bool = False) -> None:
+        """One engine minute: digests → recording → engine → persistence → alerts."""
+        if self.engine is None:
+            return
+        now = now or self.now()
+        self.bars.complete_before(now)
+        pct = float(self.engine.rules.shadow.get("mark_window_pct", 1.5))
+        universe = self._engine_universe()
+        ms = int(now.timestamp() * 1000)
+        if self.recorder is not None:
+            for sym in universe:
+                d = self.market.digest(sym, pct)
+                if d is not None:
+                    self.recorder.write("OptMarks", d, ms)
+        lag = self.market.feed_lag()
+        inputs = EngineInputs(now=now, feed_mode=lag["mode"], lag_s=lag["lag_s"], vix=self.vix_last,
+                              gamma={s: g for s, g in sorted(self.gamma_by_symbol.items()) if s in universe}, universe=universe)
+        if self.recorder is not None:
+            self.recorder.write("Tick", {"feed_mode": inputs.feed_mode, "lag_s": inputs.lag_s, "vix": inputs.vix, "gamma": inputs.gamma,
+                                         "universe": universe, "final": final}, ms)
+        events = self.engine.on_minute(inputs, self.market)
+        if final:
+            self.engine.close_all(now)
+        self.engine_ticks += 1
+        self._persist_engine(now)
+        for ev in events:
+            if ev.get("type") == "alert":
+                try:
+                    await self.notifier.send("alert", ev["text"], now)
+                except Exception as e:  # noqa: BLE001
+                    self._record_error("alert", e)
+
+    def _persist_engine(self, now: datetime) -> None:
+        assert self.engine is not None
+        td = self.engine.cfg.trade_date.isoformat()
+        for pos in self.engine.positions.values():
+            if pos.status == "open" or getattr(pos, "_persisted_status", None) != pos.status:
+                self.store.upsert_engine_trade(pos.row(), self.run_id, now)
+                pos._persisted_status = pos.status  # type: ignore[attr-defined]
+        new = self.engine.decisions[self._decisions_persisted:]
+        if new:
+            self.store.insert_engine_decisions(new, td, self.run_id)
+            self._decisions_persisted = len(self.engine.decisions)
+
+    async def engine_loop(self) -> None:
+        """Tick 2 s into every minute from the heartbeat until the report time."""
+        assert self.sched is not None
+        while not self.stopping:
+            nxt = floor_minute(self.now()) + timedelta(minutes=1, seconds=ENGINE_TICK_OFFSET_S)
+            await self.clock.sleep_until(nxt)
+            if self.stopping or self.now() >= self.sched.report:
+                return
+            try:
+                await self.engine_tick(nxt)
+            except Exception as e:  # noqa: BLE001
+                self._record_error("engine", e)
+
+    def engine_summary(self) -> dict[str, Any] | None:
+        return self.engine.state() if self.engine is not None else None
 
     # ------------------------------------------------------------- periodic
     async def flush_bars(self) -> None:
@@ -379,7 +519,7 @@ class Daemon:
             "chains": {"n_index": n_idx, "n_single": n_single, "exp_index": self.settings.expirations_index,
                        "exp_single": self.settings.expirations_single, "n_options": len(self.feed_plan.options)},
             "vix": self.vix_last, "gamma": gamma, "halts": len(self.store.halts_since(self.sched.open - timedelta(hours=6))) if self.sched else 0,
-            "econ": self.econ_today, "mirror": self.mirror.enabled, "lag": self.feed_lag(),
+            "econ": self.econ_lines, "mirror": self.mirror.enabled, "lag": self.feed_lag(), "engine": self.engine_summary(),
         }
 
     async def send_heartbeat(self) -> None:
@@ -390,11 +530,7 @@ class Daemon:
         return [{"task": k, "count": v, "first": self.first_error.get(k)} for k, v in sorted(self.errors.items())]
 
     def feed_lag(self) -> dict[str, Any]:
-        """Median exchange→receipt delay of underlying trades. ~1 s = real-time; ~900 s = the 15-minute delayed feed."""
-        if not self.lag_samples:
-            return {"lag_s": None, "mode": "unknown", "n": 0}
-        med = statistics.median(self.lag_samples)
-        return {"lag_s": round(med, 1), "mode": "realtime" if med < 30 else "DELAYED", "n": len(self.lag_samples)}
+        return self.market.feed_lag()
 
     def stats_snapshot(self) -> dict[str, Any]:
         sched = self.sched
@@ -415,6 +551,8 @@ class Daemon:
             "halts": self.store.halts_since(sched.open - timedelta(hours=6)) if sched else [],
             "mirror": self.mirror.status() if self._mirror is not None else {"enabled": False}, "telegram": list(self.notifier.sent) if self._notifier else [],
             "broker": vars(self._brokerage.broker_info) if self._brokerage is not None else {}, "data": vars(self._brokerage.data_info) if self._brokerage is not None else {},
+            "engine": self.engine_summary(), "engine_ticks": self.engine_ticks,
+            "recording": str(self.recorder.path) if self.recorder is not None else None,
         }
 
     async def send_eod(self) -> dict[str, Any]:
@@ -452,6 +590,8 @@ class Daemon:
                                                                                    "host": self.host, "version": __version__, "mode": self.mode}}, self.now())
         self.mirror.queue("saa_log_run", {"p_job": "daemon:start", "p_ok": True, "p_detail": {"run_id": self.run_id, "mode": self.mode, "host": self.host, "version": __version__}}, self.now())
         await self.mirror.flush_queue()
+        if self.settings.record_events:
+            self.recorder = Recorder(self.settings.state_dir / "recordings" / f"{self.run_id}.jsonl", underlying_symbols=set())
 
         # 1. wait for prep time
         if self.now() < sched.prep:
@@ -476,19 +616,23 @@ class Daemon:
                     break
                 await self.clock.sleep(min(300.0, 30.0 * attempt))
 
-        # 3. universe + chains + feed
+        # 3. universe + chains + feed + engine
         await self.load_universe()
+        self.market.underlyings |= set(self.index_symbols + self.single_names)
+        if self.recorder is not None:
+            self.recorder.symbols |= set(self.index_symbols + self.single_names)
         delta = await self.discover_chains(self.index_symbols + self.single_names)
         self.feed_plan = FeedPlan(set(self.index_symbols + self.single_names), set(self.index_symbols + self.single_names), set(), sched.open)
         self.feed_plan.merge(delta)
+        try:
+            await self.load_engine()
+        except Exception as e:  # noqa: BLE001
+            self._record_error("engine_load", e)
         if self._feed_factory is not None:
             self.feed = self._feed_factory(self._brokerage)
         elif self._brokerage.data is not None:
-            from .feed import DXLinkFeed, Recorder
-            rec = None
-            if self.settings.record_events:
-                rec = Recorder(self.settings.state_dir / "recordings" / f"{self.run_id}.jsonl", underlying_symbols=set(self.feed_plan.underlyings))
-            self.feed = DXLinkFeed(self._brokerage.data, recorder=rec, now_ms=lambda: int(self.now().timestamp() * 1000))
+            from .feed import DXLinkFeed
+            self.feed = DXLinkFeed(self._brokerage.data, recorder=None, now_ms=self.now_ms)   # the daemon records in on_event
 
         feed_runs = 0
 
@@ -513,6 +657,7 @@ class Daemon:
             asyncio.create_task(self.every("vix", 0, self.poll_vix, align_minutes=self.settings.vix_poll_minutes), name="vix"),
             asyncio.create_task(self.every("watch", 300.0, self.refresh_watch), name="watch"),
             asyncio.create_task(self.supervise("snapshots", self.snapshot_scheduler, restart=False), name="snapshots"),
+            asyncio.create_task(self.supervise("engine", self.engine_loop), name="engine"),
         ]
         # first VIX read right away so the heartbeat has it
         try:
@@ -533,6 +678,14 @@ class Daemon:
             await self.flush_bars()
         except Exception as e:  # noqa: BLE001
             self._record_error("bars", e)
+        try:
+            await self.engine_tick(self.now(), final=True)     # final tick: close anything still open at the bid, record it
+        except Exception as e:  # noqa: BLE001
+            self._record_error("engine", e)
+        try:
+            await self._engine_end_of_day()
+        except Exception as e:  # noqa: BLE001
+            self._record_error("engine", e)
         try:
             stats = await self.send_eod()
         except Exception as e:  # noqa: BLE001
@@ -556,11 +709,16 @@ class Daemon:
         self.store.upsert_run(self.run_id, today.isoformat(), self.started_at, "done" if ok else "failed", stats, ended_at=self.now())
         self.mirror.queue("saa_daemon_run", {"p_run_id": self.run_id, "p_patch": {"status": "done" if ok else "failed", "ended_at": iso(self.now()),
                                                                                    "stats": stats, "errors": self._errors_payload()}}, self.now())
+        eng = stats.get("engine") or {}
         self.mirror.queue("saa_log_run", {"p_job": "daemon:session", "p_ok": ok, "p_detail": {
             "run_id": self.run_id, "unhandled": self.unhandled, "errors": self.errors,
             "bars": {k: {"complete": v.get("complete"), "expected": v.get("expected"), "missing": v.get("missing")} for k, v in stats["bars"].items()},
             "snapshots": stats["snapshots"], "snapshots_expected": stats["snapshots_expected"], "n_options": stats["n_options"],
-            "feed": stats["feed"], "mirror": stats["mirror"]}}, self.now())
+            "feed": stats["feed"], "mirror": stats["mirror"],
+            "engine": {"rules_version": (eng.get("rules") or {}).get("version"), "feed_mode": eng.get("feed_mode"), "ticks": eng.get("ticks"),
+                       "observe_only_ticks": eng.get("observe_only_ticks"), "counts": eng.get("counts"), "positions": eng.get("positions"),
+                       "today_gate_r": eng.get("today_gate_r"), "today_fast_lane_r": eng.get("today_fast_lane_r"), "rails": eng.get("rails"),
+                       "stand_down_reasons": eng.get("stand_down_reasons")} if eng else None}}, self.now())
         for _ in range(3):
             try:
                 await self.mirror.flush_all()
@@ -574,6 +732,8 @@ class Daemon:
                 await self._brokerage.close()
             except Exception as e:  # noqa: BLE001
                 self._record_error("close", e)
+        if self.recorder is not None:
+            self.recorder.close()
         if self._http is not None:
             try:
                 await self._http.aclose()
@@ -581,3 +741,16 @@ class Daemon:
                 pass
         log.info("run %s finished: unhandled=%d errors=%s", self.run_id, self.unhandled, self.errors or "none")
         return RunResult(self.run_id, today, ok, stats, self.unhandled, dict(self.errors), list(self.notifier.sent))
+
+    async def _engine_end_of_day(self) -> None:
+        """Persist the cooling-off trigger for the next session (SQLite + saa.settings) and log the engine's day."""
+        if self.engine is None or self.sched is None:
+            return
+        td = self.sched.trade_date.isoformat()
+        if self.engine.rails.cooling_off_triggered:
+            self.store.set_kv("engine_cooling_off_after", td)
+            if self.mirror.enabled:
+                self.mirror.queue("saa_set_setting", {"p_key": "engine_cooling_off_after", "p_value": td}, self.now())
+        st = self.engine.state()
+        log.info("engine day %s: %s fired, %s fast-lane, %s closes, gate R %+.2f, fast-lane R %+.2f, stand-downs %s", td, st["counts"]["fired"],
+                 st["counts"]["fast_lane_opens"], st["counts"]["closes"], st["today_gate_r"], st["today_fast_lane_r"], st["stand_down_reasons"])

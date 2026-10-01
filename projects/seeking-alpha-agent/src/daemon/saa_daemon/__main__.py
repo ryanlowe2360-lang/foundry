@@ -3,7 +3,11 @@
   python -m saa_daemon smoke [--no-telegram]         prove every leg works (any day, ~30 s)
   python -m saa_daemon session [--date YYYY-MM-DD] [--force]   run today's session and exit after the EOD report
   python -m saa_daemon forever                       run every trading day (VPS / systemd mode)
-  python -m saa_daemon replay <recording.jsonl>      rebuild bars from a recording, print stats
+  python -m saa_daemon replay <recording.jsonl> [--engine] [--out ledger.json] [--eval]
+                                                     rebuild bars from a recording; --engine runs the rules engine
+                                                     deterministically and prints the ledger summary + sha256
+  python -m saa_daemon kelly-table [--account 1000]  print the plan §0.3 table and the sizing grid
+  python -m saa_daemon rules                         show the Tier 2 parameters the engine would run with (saa.rules latest)
   python -m saa_daemon check                         show .env readiness (key names only) and exit
   python -m saa_daemon load-econ <econ_calendar.json>  push the hand-maintained macro calendar into saa.calendar_days
 """
@@ -67,6 +71,14 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("forever")
     r = sub.add_parser("replay")
     r.add_argument("recording")
+    r.add_argument("--engine", action="store_true", help="run the rules engine over the recording (deterministic)")
+    r.add_argument("--out", help="write the canonical engine output (decisions + ledger) to this file")
+    r.add_argument("--eval", action="store_true", help="evaluate entries even if the recording's feed was not real-time (offline study)")
+    r.add_argument("--date", help="trade date for a pre-M3 recording without a Meta record")
+    kt = sub.add_parser("kelly-table")
+    kt.add_argument("--account", type=float, default=1000.0)
+    kt.add_argument("--k", type=float, default=0.5)
+    sub.add_parser("rules")
     sub.add_parser("check")
     le = sub.add_parser("load-econ")
     le.add_argument("path")
@@ -102,8 +114,45 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "replay":
         from .replay import replay_bars
-        print(json.dumps(replay_bars(Path(args.recording)), indent=2, default=str))
+        if not args.engine:
+            print(json.dumps(replay_bars(Path(args.recording)), indent=2, default=str))
+            return 0
+        from .engine.replay import replay_engine
+        res = replay_engine(Path(args.recording), require_realtime=(False if args.eval else None),
+                            trade_date=date.fromisoformat(args.date) if args.date else None)
+        if args.out:
+            Path(args.out).write_bytes(res.canonical)
+        print(json.dumps(res.summary(), indent=2, default=str))
         return 0
+    if args.cmd == "kelly-table":
+        from .engine.kelly import format_table, kelly_table, plan_rows
+        print("Plan §0.3 — f* = p − (1−p)/W, growth = p·ln(1+f·W) + (1−p)·ln(1−f):")
+        print(format_table(plan_rows()))
+        print()
+        print(f"Sizing grid at account ${args.account:,.0f}, k = {args.k} (contracts at a given premium; known-edge posterior, caps + floor applied):")
+        print(format_table(kelly_table(args.account, k=args.k)))
+        return 0
+    if args.cmd == "rules":
+        from .engine.rules import Rules
+
+        async def show() -> int:
+            rules = Rules.default()
+            if settings.mirror_configured and settings.mirror_enabled:
+                from .http import Httpx2Client
+                from .mirror import SupabaseMirror
+                from .store import Store
+                http = Httpx2Client()
+                m = SupabaseMirror(settings, Store(settings.state_dir / "saa.sqlite"), http)
+                try:
+                    row = await m.rules_latest()
+                    if row:
+                        rules = Rules.from_row(row)
+                finally:
+                    await http.aclose()
+            print(json.dumps({"version": rules.version, "evidence": rules.evidence, "ignored_tier1_keys": list(rules.ignored), "params": rules.params}, indent=2))
+            return 0
+
+        return asyncio.run(show())
     if args.cmd == "load-econ":
         from .http import Httpx2Client
         from .mirror import SupabaseMirror

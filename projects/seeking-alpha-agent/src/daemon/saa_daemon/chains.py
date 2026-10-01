@@ -108,12 +108,24 @@ class OptState:
     volume: float | None = None
     quote_ms: int = 0
     greeks_ms: int = 0
+    recv_ms: int = 0        # when the daemon received the latest quote (dxfeed quotes often carry time 0)
 
     @property
     def mid(self) -> float | None:
         if self.bid is None or self.ask is None:
             return None
         return (self.bid + self.ask) / 2.0
+
+    @property
+    def two_sided(self) -> bool:
+        return self.bid is not None and self.ask is not None and self.bid > 0 and self.ask >= self.bid
+
+    @property
+    def spread_frac(self) -> float | None:
+        """Bid-ask spread as a fraction of the ask (the premium a buyer pays)."""
+        if not self.two_sided or not self.ask:
+            return None
+        return (self.ask - self.bid) / self.ask
 
 
 class OptionBook:
@@ -130,9 +142,11 @@ class OptionBook:
             self.state[sym] = s
         return s
 
-    def on_quote(self, e: QuoteEvt) -> None:
+    def on_quote(self, e: QuoteEvt, recv_ms: int = 0) -> None:
         s = self._get(e.symbol)
         s.bid, s.ask, s.quote_ms = e.bid, e.ask, e.time_ms
+        if recv_ms:
+            s.recv_ms = recv_ms
         self.events += 1
 
     def on_greeks(self, e: GreeksEvt) -> None:

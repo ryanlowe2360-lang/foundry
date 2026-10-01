@@ -73,6 +73,13 @@ class Recorder:
             if self.n % 500 == 0:
                 self._f.flush()
 
+    def write(self, kind: str, rec: dict[str, Any], recv_ms: int) -> None:
+        """Engine-side records (Meta / Plan / OptMarks / Tick) — written in the same stream so replay sees the live order."""
+        row = {"kind": kind, **rec, "recv_ms": recv_ms}
+        self._f.write(json.dumps(row, separators=(",", ":"), default=str) + "\n")
+        self.n += 1
+        self._f.flush()
+
     def close(self) -> None:
         try:
             self._f.flush()
