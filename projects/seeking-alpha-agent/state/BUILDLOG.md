@@ -74,21 +74,25 @@ Append-only. Newest entry on top. Every session that touches this project adds o
   `/bin/bash`). The 09-28 session log ends with `unhandled=0 errors={'halts': 60, 'feed': 62}` — the Mac lost DNS from ~15:26
   ET (mirror / Telegram retries) and slept (a snapshot tick scheduled for 15:10 ran at 16:04), which is what `caffeinate` in
   `run.sh` now prevents. Recording `2026-09-28-131736-session.jsonl`: 60,080 underlying-level events.
-- **Not done this session:** the Mac link dropped after the first minutes and did not come back — the deploy bundle
-  (`saa-daemon-v0.3.0.tgz`, 42 files, sha256 list in the session) was handed to Ryan instead of committed to
-  `agent/daemon/` (checksums to verify on the Mac are in the chat), and the real 09-28 recording could not be staged, so
-  `test_real_2026_09_28_recording_replays_deterministically` is skipped until the fixture
-  `src/tests/fixtures/recording-2026-09-28-SPY-QQQ-IWM.jsonl.gz` exists (trim + gzip command in the next_action).
+- **Deployed (18:40 ET, after the Mac link came back):** all 42 files of v0.3.0 committed to `Desktop/Seeking Alpha Agent /agent/daemon/`
+  + `agent/SETUP.md` through the bridge; every sha256 re-hashed on the Mac matches the bundle (`__version__ = "0.3.0"` on the Mac,
+  `run.sh` executable). The real 09-28 recording was trimmed on the Mac to SPY/QQQ/IWM (23,318 of 60,080 lines: 4,144 Candle,
+  10,613 Quote, 8,550 Trade, 8 Summary, 3 Profile), gzipped (347 KB, sha256 `db192af0…` identical on both sides) and added as
+  `src/tests/fixtures/recording-2026-09-28-SPY-QQQ-IWM.jsonl.gz`: `test_real_2026_09_28_recording_replays_deterministically`
+  now runs — 31 synthesized ticks (the file's distinct receipt minutes), feed mode **DELAYED on every tick**, two replays
+  byte-identical (sha256 `966dd0da…`), gated replay observe-only 31/31, ungated replay stands down on the Tier 1 dead zone
+  (13:23 SPY VWAP signal → "Tier 1 dead zone 11:30–13:30"). Suite: **87 passed**, 0 skipped. (The bundle + installer that went
+  through the chat earlier are now redundant; harmless if run — same bytes.)
 - **Acceptance (spec M3) walked:** (1) property tests for every Tier 1 rail — `test_engine_rails.py` + `test_engine_kelly.py`
   ✓; (2) replay of ≥ 5 recorded sessions deterministic, byte-identical — 5 synthetic + the simulated session's own
   recording (live == replay) ✓ (the real 09-28 file joins when staged); (3) Kelly tests reproduce the plan table ✓.
   Milestone 3 marked done; milestone 2 stays in-progress per Ryan.
-- **Stopped at:** M3 complete offline; waiting on Ryan's Friday session (M2 acceptance) and the market-data entitlement
+- **Stopped at:** M3 complete and deployed; waiting on Ryan's Friday session (M2 acceptance) and the market-data entitlement
   (M3 live evaluation). Resume point in `next_action`.
 - **Lessons:** the Supabase MCP tool treats any statement containing `delete` as destructive and cancels it without an
   interactive approval — put retention changes in their own step and expect to run them from the SQL editor. The device
-  bridge can drop for the rest of a session; stage anything needed from the Mac in the first minutes and keep a deliverable
-  path (tarball + checksums) ready.
+  bridge can drop for hours mid-session; stage anything needed from the Mac in the first minutes, keep a deliverable path
+  (tarball + checksums) ready, and retry the bridge before the final message — it came back in time here.
 
 ## 2026-09-28 — session 5 (first live session run, started late; 15-minute delayed feed found)
 
