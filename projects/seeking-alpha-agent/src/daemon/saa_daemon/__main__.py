@@ -10,6 +10,11 @@
   python -m saa_daemon rules                         show the Tier 2 parameters the engine would run with (saa.rules latest)
   python -m saa_daemon check                         show .env readiness (key names only) and exit
   python -m saa_daemon load-econ <econ_calendar.json>  push the hand-maintained macro calendar into saa.calendar_days
+  python -m saa_daemon paper-roundtrip [--symbol SPY] [--n 3] [--allow-delayed]   M4: sandbox round trip(s) through the ladder, reconciled
+  python -m saa_daemon halt-test [--symbol SPY] [--allow-delayed]                 M4: open 1 contract, kill switch → flat within 10 s
+  python -m saa_daemon approval-test [--timeout 180]                              M4: a real Telegram proposal (Approve / Skip / timeout = Skip)
+  python -m saa_daemon halt [--reason ...] | resume                               engage / clear the kill switch (file flag + saa.settings.halt)
+  python -m saa_daemon paper-status                                               today's paper book (SQLite)
 """
 from __future__ import annotations
 
@@ -82,6 +87,18 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check")
     le = sub.add_parser("load-econ")
     le.add_argument("path")
+    for name in ("paper-roundtrip", "halt-test"):
+        pp = sub.add_parser(name)
+        pp.add_argument("--symbol", default="SPY")
+        pp.add_argument("--allow-delayed", action="store_true", help="run on a non-real-time quote (sandbox plumbing only; recorded as such)")
+        if name == "paper-roundtrip":
+            pp.add_argument("--n", type=int, default=1)
+    at = sub.add_parser("approval-test")
+    at.add_argument("--timeout", type=float, default=180.0)
+    h = sub.add_parser("halt")
+    h.add_argument("--reason", default="")
+    sub.add_parser("resume")
+    sub.add_parser("paper-status")
     args = p.parse_args(argv)
 
     settings = _settings(args)
@@ -172,6 +189,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         return asyncio.run(go())
+    if args.cmd in ("paper-roundtrip", "halt-test", "approval-test", "halt", "resume", "paper-status"):
+        from .paper_cli import main_paper
+        return main_paper(args.cmd, settings, args)
     return 2
 
 

@@ -139,7 +139,7 @@ class ApprovalGate:
     def _settle(self, p: Proposal, status: str, by: str, note: str) -> None:
         now = self.clock.now()
         p.status, p.decided_by, p.decided_at, p.note = status, by, now, note
-        p.latency_s = round((now - p.created_at).total_seconds(), 1)
+        p.latency_s = self.timeout_s if status == "timeout" else round((now - p.created_at).total_seconds(), 1)
         self.counts[status if status in self.counts else "failed"] = self.counts.get(status, 0) + 1
         entry = self.pending.pop(p.proposal_id, None)
         if entry is not None and not entry[1].done():
