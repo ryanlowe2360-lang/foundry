@@ -31,6 +31,11 @@ from saa_daemon.telegram import Notifier
 from test_daemon_session_sim import OPT_RE, SPOTS, FakeBrokerage, FakeFeed
 from test_daemon_units import FakeHttp
 
+
+async def _no_broker(_brokerage):
+    """M2/M3 simulations: no paper execution (M4 has its own simulation)."""
+    return None
+
 D = date(2026, 9, 28)
 SCHED = Schedule.for_date(D)
 
@@ -149,7 +154,7 @@ async def _run(tmp_path: Path, fixtures: Path, env_file: Path, *, lag_ms: int = 
     notifier = Notifier(settings, mirror, http)
     brokerage = FakeBrokerage()
     feed = EngineFeed(clock, drop_at=et_dt(D, time(11, 0)), lag_ms=lag_ms)
-    daemon = Daemon(settings, clock=clock, store=store, http=http, brokerage=brokerage, feed_factory=lambda _b: feed,
+    daemon = Daemon(settings, clock=clock, store=store, http=http, brokerage=brokerage, feed_factory=lambda _b: feed, broker_factory=_no_broker,
                     mirror=mirror, notifier=notifier, mode="session", trade_date=D, host="testmac")
     task = asyncio.create_task(daemon.run_session())
     deadline = SCHED.shutdown + timedelta(minutes=10)

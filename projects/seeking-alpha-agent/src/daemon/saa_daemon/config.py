@@ -156,6 +156,7 @@ class Settings:
     mirror_ticks: bool = False       # also feed saa.price_ticks (M1 scorer) — off by default, M1 pipeline untouched
     halts_poll_seconds: int = 60
     vix_poll_minutes: int = 5
+    execution_enabled: bool = True   # M4: paper orders in the sandbox (SAA_EXECUTION=false → engine + shadow ledger only)
 
     # ----- derived -----
     @property
@@ -256,6 +257,7 @@ def load_settings(env_file: str | os.PathLike[str] | None = None, *, environ: di
         mirror_ticks=_bool(g("SAA_MIRROR_TICKS"), False),
         halts_poll_seconds=_int(g("SAA_HALTS_POLL_SECONDS"), 60),
         vix_poll_minutes=_int(g("SAA_VIX_POLL_MINUTES"), 5),
+        execution_enabled=_bool(g("SAA_EXECUTION"), True),
     )
 
 
@@ -269,5 +271,5 @@ def readiness(settings: Settings) -> list[str]:
     if not settings.mirror_configured:
         problems.append("Supabase mirror: SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY not both set — data stays in SQLite only")
     if not settings.telegram_fallback_configured:
-        problems.append("Telegram fallback: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not both set (outbox path still works)")
+        problems.append("Telegram bot: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not both set — no approval buttons or /halt from the daemon (M4); outbox path still works")
     return problems

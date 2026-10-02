@@ -11,6 +11,11 @@ against fakes and a virtual clock in tests/test_daemon_session_sim.py.
 M3: the engine ticks 2 s into every minute on the mark digest the recorder writes (`OptMarks` + `Tick` records), so a
 replay of the recording reproduces the live decisions byte for byte. Live evaluation is gated on
 `feed_lag.mode == realtime`; otherwise the engine runs observe-only and records why.
+
+M4: the engine's gate-fired open / bank / close events feed the paper **executor** (`execution/`): Telegram approval
+(Approve / Skip, 3-minute timeout = Skip), limit-at-mid retry ladder in the sandbox account, fill logging, reconciliation
+every 30 s, kill switch (`/halt` or the `state/HALT` file → flat within 10 s). The order path sits behind the same
+real-time gate as the engine (D19). The Telegram bot is long-polled from here while the session runs.
 """
 from __future__ import annotations
 
@@ -28,6 +33,8 @@ from .clock import Clock, Schedule, align_up, et, floor_minute, is_trading_day, 
 from .config import Settings
 from .engine import Engine, EngineConfig, EngineInputs, Rules
 from .events import Evt, ProfileEvt
+from .execution import ApprovalGate, ExecutionPolicy, Executor, KillSwitch
+from .execution.telegram_bot import TelegramBot
 from .feed import Feed, FeedPlan, Recorder
 from .halts import fetch_halts, halt_from_profile
 from .http import HttpClient
@@ -58,7 +65,9 @@ class Daemon:
     def __init__(self, settings: Settings, *, clock: Clock | None = None, store: Store | None = None,
                  http: HttpClient | None = None, brokerage: Any = None, feed_factory: Callable[[Any], Feed] | None = None,
                  mirror: SupabaseMirror | None = None, notifier: Notifier | None = None, mode: str = "session",
-                 trade_date: date | None = None, force: bool = False, host: str | None = None):
+                 trade_date: date | None = None, force: bool = False, host: str | None = None,
+                 broker_factory: Callable[[Any], Awaitable[Any]] | None = None, bot: TelegramBot | None = None,
+                 execution_policy: ExecutionPolicy | None = None):
         self.settings = settings
         self.clock = clock or Clock()
         self.mode = mode
@@ -100,6 +109,15 @@ class Daemon:
         self.engine_meta: dict[str, Any] = {}
         self.engine_ticks = 0
         self._decisions_persisted = 0
+        # execution (M4)
+        self._broker_factory = broker_factory
+        self._bot = bot
+        self.execution_policy = execution_policy or ExecutionPolicy()
+        self.killswitch = KillSwitch(settings.state_dir)
+        self.executor: Executor | None = None
+        self.bot: TelegramBot | None = None
+        self.execution_off_reason: str | None = None
+        self._halt_handled = False
 
     # ---------------------------------------------------------------- market state passthroughs (tests + reports)
     @property
@@ -401,9 +419,11 @@ class Daemon:
         if self.recorder is not None:
             self.recorder.write("Tick", {"feed_mode": inputs.feed_mode, "lag_s": inputs.lag_s, "vix": inputs.vix, "gamma": inputs.gamma,
                                          "universe": universe, "final": final}, ms)
-        events = self.engine.on_minute(inputs, self.market)
+        before = len(self.engine.events)
+        self.engine.on_minute(inputs, self.market)
         if final:
             self.engine.close_all(now)
+        events = self.engine.events[before:]          # incl. the forced closes of the final tick
         self.engine_ticks += 1
         self._persist_engine(now)
         for ev in events:
@@ -412,6 +432,7 @@ class Daemon:
                     await self.notifier.send("alert", ev["text"], now)
                 except Exception as e:  # noqa: BLE001
                     self._record_error("alert", e)
+        await self._execution_events(events, inputs)
 
     def _persist_engine(self, now: datetime) -> None:
         assert self.engine is not None
@@ -440,6 +461,184 @@ class Daemon:
 
     def engine_summary(self) -> dict[str, Any] | None:
         return self.engine.state() if self.engine is not None else None
+
+    # ------------------------------------------------------------- execution (M4)
+    def _option_quote(self, symbol: str) -> tuple[float, float] | None:
+        st = self.market.options.get(symbol)
+        if st is None or not st.two_sided:
+            return None
+        return float(st.bid), float(st.ask)  # type: ignore[arg-type]
+
+    async def _notify(self, kind: str, text: str) -> None:
+        await self.notifier.send(kind, text, self.now())
+
+    def _set_halt_setting(self, flag: bool) -> None:
+        self.store.set_kv("halt", "true" if flag else "false")
+        if self.mirror.enabled:
+            self.mirror.queue("saa_set_setting", {"p_key": "halt", "p_value": "true" if flag else "false"}, self.now())
+
+    async def load_execution(self) -> None:
+        """Build the paper executor on the sandbox account (M4). Anything missing → execution OFF with a stated reason."""
+        assert self.sched is not None
+        s = self.settings
+        if not s.execution_enabled:
+            self.execution_off_reason = "SAA_EXECUTION=false"
+            log.warning("paper execution OFF: %s", self.execution_off_reason)
+            return
+        if s.broker_env != "sandbox":
+            self.execution_off_reason = f"broker env {s.broker_env!r} is not the sandbox (M5)"
+            log.error("paper execution OFF: %s", self.execution_off_reason)
+            return
+        broker = None
+        try:
+            if self._broker_factory is not None:
+                broker = await self._broker_factory(self._brokerage)
+            elif self._brokerage is not None and getattr(self._brokerage, "broker", None) is not None:
+                from .execution.tastytrade_broker import TastytradeBroker
+                broker = await TastytradeBroker.open(self._brokerage.broker, env=s.broker_env)
+        except Exception as e:  # noqa: BLE001
+            self._record_error("execution_load", e)
+        if broker is None:
+            err = getattr(getattr(self._brokerage, "broker_info", None), "error", None) if self._brokerage is not None else None
+            self.execution_off_reason = f"sandbox account unavailable ({err or 'no sandbox session'})"
+            log.error("paper execution OFF: %s", self.execution_off_reason)
+            return
+        self.bot = self._bot or TelegramBot(s, self._http, self.clock)
+        messenger = self.bot if self.bot.configured else None
+        if messenger is None:
+            log.warning("Telegram bot not configured — proposals cannot be approved; every entry will be logged as failed")
+        account = self.engine.cfg.account if self.engine is not None else 1000.0
+        approvals = ApprovalGate(messenger, self.clock, self.store, timeout_s=self.execution_policy.approval_timeout_s, run_id=self.run_id,
+                                 trade_date=self.sched.trade_date)
+        self.executor = Executor(broker=broker, store=self.store, clock=self.clock, approvals=approvals, killswitch=self.killswitch,
+                                 policy=self.execution_policy, account=account, run_id=self.run_id, trade_date=self.sched.trade_date,
+                                 quote_fn=self._option_quote, notify=self._notify, on_error=self._record_error, set_halt_setting=self._set_halt_setting)
+        # the M1 /halt path sets saa.settings.halt; honour it at start (and the file flag from a previous run)
+        halted_setting = False
+        if self.mirror.enabled:
+            try:
+                halted_setting = (await self.mirror.get_setting("halt") or "").strip().lower() == "true"
+            except MirrorError as e:
+                log.warning("halt setting unavailable (%s)", e)
+        if halted_setting and not self.killswitch.engaged:
+            self.killswitch.engage("saa.settings.halt was true at session start (/halt via the edge function)", "settings", self.now())
+        if self.killswitch.engaged:
+            self._halt_handled = True       # nothing to flatten from a previous run here; reconciliation reports any sandbox position
+            log.warning("kill switch is ENGAGED at start: %s", self.killswitch.info())
+        log.info("paper execution ready: %s %s, %s mode, approval timeout %.0fs, telegram %s", getattr(broker, "name", "?"),
+                 getattr(broker, "account_masked", "?"), self.execution_policy.mode, self.execution_policy.approval_timeout_s,
+                 "configured" if messenger else "NOT configured")
+
+    async def _execution_events(self, events: list[dict[str, Any]], inputs: EngineInputs) -> None:
+        if self.executor is None or not events:
+            return
+        try:
+            await self.executor.on_engine_events(events, feed_mode=inputs.feed_mode, lag_s=inputs.lag_s)
+        except Exception as e:  # noqa: BLE001
+            self._record_error("execution", e)
+
+    async def reconcile_round(self) -> None:
+        if self.executor is None:
+            return
+        await self.executor.reconcile()
+        if self.mirror.enabled and not self.killswitch.engaged:
+            try:
+                if (await self.mirror.get_setting("halt") or "").strip().lower() == "true":
+                    await self.executor.halt("saa.settings.halt is true (/halt via the edge function)", "settings")
+                    self._halt_handled = True
+            except MirrorError as e:
+                log.debug("halt setting check failed: %s", e)
+
+    async def killswitch_round(self) -> None:
+        """Every 2 s: a HALT file that appeared from outside (`./run.sh halt`) flattens exactly once; a cleared file re-arms."""
+        if self.executor is None:
+            return
+        if self.killswitch.engaged:
+            if not self._halt_handled:
+                self._halt_handled = True
+                info = self.killswitch.info() or {}
+                await self.executor.halt(str(info.get("reason") or "HALT file present"), str(info.get("by") or "file"))
+        else:
+            self._halt_handled = False
+
+    async def _telegram_loop(self) -> None:
+        assert self.bot is not None
+
+        async def load_offset() -> int:
+            if self.mirror.enabled:
+                v = await self.mirror.get_setting("telegram_update_offset")
+                return int(v or 0)
+            return int(self.store.get_kv("telegram_update_offset", "0") or 0)
+
+        async def save_offset(offset: int) -> None:
+            self.store.set_kv("telegram_update_offset", str(offset))
+            if self.mirror.enabled:
+                try:
+                    await self.mirror.rpc("saa_set_setting", {"p_key": "telegram_update_offset", "p_value": str(offset)})
+                except MirrorError:
+                    self.mirror.queue("saa_set_setting", {"p_key": "telegram_update_offset", "p_value": str(offset)}, self.now())
+
+        await self.bot.poll(self.stop, on_callback=self._on_tg_callback, on_command=self._on_tg_command, load_offset=load_offset, save_offset=save_offset)
+
+    async def _on_tg_callback(self, data: str, by: str, cb_id: str, message_id: int | None) -> str | None:
+        if self.executor is None:
+            return "The daemon is not executing — nothing to approve."
+        parts = data.split(":")
+        if len(parts) == 3 and parts[0] == "appr":
+            p = await self.executor.approvals.resolve(parts[1], parts[2], by)
+            if p is None:
+                return "Too late — this proposal already closed."
+            return "Approved ✅ placing the paper order" if p.approved else "Skipped ⏭"
+        return None
+
+    async def _on_tg_command(self, cmd: str, args: str, by: str) -> str | None:
+        ex = self.executor
+        if cmd == "/halt":
+            if ex is None:
+                self.killswitch.engage(f"/halt {args}".strip(), by, self.now())
+                self._set_halt_setting(True)
+                return "HALT flag set (no paper execution in this session)."
+            await ex.halt(f"/halt {args}".strip(), by)
+            self._halt_handled = True
+            return None    # the executor's HALT report goes out as a system message
+        if cmd == "/resume":
+            if ex is None:
+                self.killswitch.clear(by)
+                self._set_halt_setting(False)
+                return "HALT flag cleared."
+            ok = await ex.resume(by)
+            self._halt_handled = False
+            return None if ok else "Not halted."
+        if cmd == "/status":
+            return self.status_text()
+        if cmd == "/positions":
+            if ex is None:
+                return "Paper execution is off this session."
+            opened = [t for t in ex.trades.values() if t.remaining > 0 and t.status in ("open", "closing")]
+            if not opened:
+                return "No open paper positions."
+            return "\n".join(f"{t.symbol} {t.option_symbol} ×{t.remaining} @ {t.entry_price} ({t.status})" for t in opened)
+        if cmd in ("/help", "/start"):
+            return "Commands: /status · /positions · /halt — flatten and stop entries · /resume — re-arm · /id"
+        if cmd == "/id":
+            return f"chat id: {self.settings.telegram_chat_id}"
+        return None
+
+    def status_text(self) -> str:
+        lag = self.feed_lag()
+        eng = self.engine_summary() or {}
+        ex = self.executor.summary() if self.executor is not None else None
+        bits = [f"SAA {self.run_id or 'idle'} · feed {lag.get('mode')} {lag.get('lag_s') if lag.get('lag_s') is not None else '—'}s",
+                f"engine: {(eng.get('counts') or {}).get('fired', 0)} fired · {(eng.get('positions') or {}).get('open', 0)} shadow open · gate R {eng.get('today_gate_r', 0):+.2f}" if eng else "engine: not loaded",
+                (f"paper: {ex['open']} open · {ex['closed']} closed · {ex['realized_r']:+.2f}R · proposals {ex['counts']['proposed']} "
+                 f"(✅{ex['counts']['approved']} ⏭{ex['counts']['skipped']} ⏱{ex['counts']['timeout']})" + (" · HALTED" if ex["halted"] else ""))
+                if ex else f"paper: OFF ({self.execution_off_reason or 'not loaded'})"]
+        return "\n".join(bits)
+
+    def execution_summary(self) -> dict[str, Any] | None:
+        if self.executor is not None:
+            return self.executor.summary()
+        return {"off": True, "reason": self.execution_off_reason} if self.execution_off_reason else None
 
     # ------------------------------------------------------------- periodic
     async def flush_bars(self) -> None:
@@ -520,6 +719,7 @@ class Daemon:
                        "exp_single": self.settings.expirations_single, "n_options": len(self.feed_plan.options)},
             "vix": self.vix_last, "gamma": gamma, "halts": len(self.store.halts_since(self.sched.open - timedelta(hours=6))) if self.sched else 0,
             "econ": self.econ_lines, "mirror": self.mirror.enabled, "lag": self.feed_lag(), "engine": self.engine_summary(),
+            "execution": self.execution_summary(), "telegram_bot": self.bot.status() if self.bot is not None else None,
         }
 
     async def send_heartbeat(self) -> None:
@@ -552,6 +752,7 @@ class Daemon:
             "mirror": self.mirror.status() if self._mirror is not None else {"enabled": False}, "telegram": list(self.notifier.sent) if self._notifier else [],
             "broker": vars(self._brokerage.broker_info) if self._brokerage is not None else {}, "data": vars(self._brokerage.data_info) if self._brokerage is not None else {},
             "engine": self.engine_summary(), "engine_ticks": self.engine_ticks,
+            "execution": self.execution_summary(), "telegram_bot": self.bot.status() if self.bot is not None else None,
             "recording": str(self.recorder.path) if self.recorder is not None else None,
         }
 
@@ -629,6 +830,11 @@ class Daemon:
             await self.load_engine()
         except Exception as e:  # noqa: BLE001
             self._record_error("engine_load", e)
+        try:
+            await self.load_execution()
+        except Exception as e:  # noqa: BLE001
+            self._record_error("execution_load", e)
+            self.execution_off_reason = self.execution_off_reason or f"{type(e).__name__}: {str(e)[:120]}"
         if self._feed_factory is not None:
             self.feed = self._feed_factory(self._brokerage)
         elif self._brokerage.data is not None:
@@ -660,6 +866,13 @@ class Daemon:
             asyncio.create_task(self.supervise("snapshots", self.snapshot_scheduler, restart=False), name="snapshots"),
             asyncio.create_task(self.supervise("engine", self.engine_loop), name="engine"),
         ]
+        if self.executor is not None:
+            tasks += [
+                asyncio.create_task(self.every("reconcile", self.execution_policy.reconcile_seconds, self.reconcile_round), name="reconcile"),
+                asyncio.create_task(self.every("killswitch", 2.0, self.killswitch_round), name="killswitch"),
+            ]
+            if self.bot is not None and self.bot.configured:
+                tasks.append(asyncio.create_task(self.supervise("telegram", self._telegram_loop), name="telegram"))
         # first VIX read right away so the heartbeat has it
         try:
             await self.poll_vix()
@@ -687,6 +900,12 @@ class Daemon:
             await self._engine_end_of_day()
         except Exception as e:  # noqa: BLE001
             self._record_error("engine", e)
+        if self.executor is not None:
+            try:
+                await self.executor.end_of_day()                 # expire pending proposals, close anything still open, reconcile
+                await self.executor.reconcile()
+            except Exception as e:  # noqa: BLE001
+                self._record_error("execution", e)
         try:
             stats = await self.send_eod()
         except Exception as e:  # noqa: BLE001
@@ -700,6 +919,11 @@ class Daemon:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if self.executor is not None:
+            try:
+                await self.executor.shutdown()
+            except Exception as e:  # noqa: BLE001
+                self._record_error("execution", e)
         try:
             await self.flush_bars()
         except Exception as e:  # noqa: BLE001
@@ -719,7 +943,8 @@ class Daemon:
             "engine": {"rules_version": (eng.get("rules") or {}).get("version"), "feed_mode": eng.get("feed_mode"), "ticks": eng.get("ticks"),
                        "observe_only_ticks": eng.get("observe_only_ticks"), "counts": eng.get("counts"), "positions": eng.get("positions"),
                        "today_gate_r": eng.get("today_gate_r"), "today_fast_lane_r": eng.get("today_fast_lane_r"), "rails": eng.get("rails"),
-                       "stand_down_reasons": eng.get("stand_down_reasons")} if eng else None}}, self.now())
+                       "stand_down_reasons": eng.get("stand_down_reasons")} if eng else None,
+            "execution": stats.get("execution")}}, self.now())
         for _ in range(3):
             try:
                 await self.mirror.flush_all()

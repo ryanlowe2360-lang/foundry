@@ -31,6 +31,11 @@ from saa_daemon.store import Store
 from saa_daemon.telegram import Notifier
 from test_daemon_units import FakeHttp
 
+
+async def _no_broker(_brokerage):
+    """M2/M3 simulations: no paper execution (M4 has its own simulation)."""
+    return None
+
 D = date(2026, 9, 28)
 SPOTS = {"SPY": 650.0, "QQQ": 580.0, "IWM": 240.0, "NVDA": 180.0, "TSLA": 420.0}
 OPT_RE = re.compile(r"^\.([A-Z]+)(\d{6})([CP])([\d.]+)$")
@@ -211,7 +216,7 @@ async def test_full_session_simulation(env_file: Path, tmp_path: Path, fixtures:
     notifier = Notifier(settings, mirror, http)
     brokerage = FakeBrokerage()
     feed = FakeFeed(clock, drop_at=et_dt(D, time(11, 0)))
-    daemon = Daemon(settings, clock=clock, store=store, http=http, brokerage=brokerage, feed_factory=lambda _b: feed,
+    daemon = Daemon(settings, clock=clock, store=store, http=http, brokerage=brokerage, feed_factory=lambda _b: feed, broker_factory=_no_broker,
                     mirror=mirror, notifier=notifier, mode="session", trade_date=D, host="testmac")
 
     task = asyncio.create_task(daemon.run_session())

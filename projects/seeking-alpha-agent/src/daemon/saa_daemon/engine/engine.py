@@ -213,7 +213,12 @@ class Engine:
             st = market.options.get(pos.option_symbol)
             exit_: Exit | None = None
             if st is not None and st.two_sided:
+                banked_before = pos.banked_contracts
                 exit_ = pos.on_mark(now, st.bid, st.ask, market.spots.get(pos.symbol), self.rules)
+                if pos.banked_contracts > banked_before:
+                    # partial bank: the daemon's paper executor (M4) sells these contracts; the journal row is in pos.events
+                    self.events.append({"type": "bank", "at": now.isoformat(), "position": pos.key, "symbol": pos.symbol, "source": pos.source,
+                                        "contracts": pos.banked_contracts - banked_before, "bid": pos.last_bid})
             if exit_ is None:
                 bars = day_bars(market.bars, pos.symbol, self.sched.open, now)
                 exit_ = pos.on_bar_close(bars, self.rules)
@@ -436,6 +441,8 @@ class Engine:
                 self.counts["closes"] += 1
             self._record(now, pos.symbol, pos.window, "manage", "close" if pos.status == "closed" else "void", reason, position=pos.key,
                          r_result=round(pos.r_result or 0.0, 4) if pos.r_result is not None else None)
+            self.events.append({"type": "close", "at": now.isoformat(), "position": pos.key, "symbol": pos.symbol, "source": pos.source, "lane": pos.lane,
+                                "r_result": round(pos.r_result or 0.0, 4), "reason": reason, "row": pos.row()})
 
     # ----------------------------------------------------------------------------------------------------- output
     def ledger_rows(self) -> list[dict[str, Any]]:

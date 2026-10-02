@@ -166,12 +166,47 @@ class SupabaseMirror:
         self.rows_pushed["engine_decisions"] = self.rows_pushed.get("engine_decisions", 0) + len(rows)
         return len(rows)
 
+    # ------------------------------------------------------------ execution (M4)
+    async def _flush_keyed(self, name: str, rpc: str, dirty: Any, mark: Any, key: str, limit: int) -> int:
+        if not self.enabled:
+            return 0
+        rows = dirty(limit)
+        if not rows:
+            return 0
+        await self.rpc(rpc, {"p_rows": [{"trade_date": r["trade_date"], "run_id": r["run_id"], **r["payload"]} for r in rows]})
+        for r in rows:
+            mark(r[key], r["updated_at"])
+        self.rows_pushed[name] = self.rows_pushed.get(name, 0) + len(rows)
+        return len(rows)
+
+    async def flush_paper_orders(self, limit: int = 200) -> int:
+        return await self._flush_keyed("paper_orders", "saa_paper_orders_upsert", self.store.dirty_paper_orders, self.store.mark_paper_order_mirrored, "ticket_id", limit)
+
+    async def flush_paper_trades(self, limit: int = 200) -> int:
+        return await self._flush_keyed("paper_trades", "saa_paper_trades_upsert", self.store.dirty_paper_trades, self.store.mark_paper_trade_mirrored, "engine_key", limit)
+
+    async def flush_approvals(self, limit: int = 200) -> int:
+        return await self._flush_keyed("approvals", "saa_approvals_upsert", self.store.dirty_approvals, self.store.mark_approval_mirrored, "proposal_id", limit)
+
+    async def flush_reconciliations(self, limit: int = 200) -> int:
+        if not self.enabled:
+            return 0
+        rows = self.store.dirty_reconciliations(limit)
+        if not rows:
+            return 0
+        await self.rpc("saa_reconciliations_insert", {"p_rows": [{"ts": r["ts"], "trade_date": r["trade_date"], "run_id": r["run_id"], "ok": bool(r["ok"]),
+                                                                    **{k: v for k, v in r["payload"].items() if k != "ts"}} for r in rows]})
+        self.store.mark_reconciliations_mirrored([r["id"] for r in rows])
+        self.rows_pushed["reconciliations"] = self.rows_pushed.get("reconciliations", 0) + len(rows)
+        return len(rows)
+
     async def flush_all(self) -> dict[str, int]:
         """One mirror round. Each part is independent; failures are counted, never raised."""
         out: dict[str, int] = {}
         for name, fn in (("queue", self.flush_queue), ("bars", self.flush_bars), ("snapshots", self.flush_snapshots),
                          ("vix", self.flush_vix), ("halts", self.flush_halts), ("engine_trades", self.flush_engine_trades),
-                         ("engine_decisions", self.flush_engine_decisions)):
+                         ("engine_decisions", self.flush_engine_decisions), ("paper_orders", self.flush_paper_orders),
+                         ("paper_trades", self.flush_paper_trades), ("approvals", self.flush_approvals), ("reconciliations", self.flush_reconciliations)):
             try:
                 out[name] = await fn()
             except MirrorError as e:

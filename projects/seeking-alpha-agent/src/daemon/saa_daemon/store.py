@@ -49,6 +49,22 @@ create table if not exists engine_decisions (
   id integer primary key autoincrement, ts text not null, trade_date text not null, run_id text not null, symbol text not null,
   kind text not null, decision text not null, reason text not null, payload text not null, mirrored integer not null default 0);
 create index if not exists engine_decisions_dirty on engine_decisions (mirrored);
+create table if not exists paper_orders (
+  ticket_id text primary key, engine_key text not null, trade_date text not null, run_id text not null, symbol text not null,
+  status text not null, payload text not null, updated_at text not null, mirrored integer not null default 0);
+create index if not exists paper_orders_dirty on paper_orders (mirrored);
+create table if not exists paper_trades (
+  engine_key text primary key, trade_date text not null, run_id text not null, symbol text not null, status text not null,
+  realized_r real, payload text not null, updated_at text not null, mirrored integer not null default 0);
+create index if not exists paper_trades_dirty on paper_trades (mirrored);
+create table if not exists approvals (
+  proposal_id text primary key, engine_key text not null, trade_date text not null, run_id text not null, status text not null,
+  payload text not null, updated_at text not null, mirrored integer not null default 0);
+create index if not exists approvals_dirty on approvals (mirrored);
+create table if not exists reconciliations (
+  id integer primary key autoincrement, ts text not null, trade_date text not null, run_id text not null, ok integer not null,
+  payload text not null, mirrored integer not null default 0);
+create index if not exists reconciliations_dirty on reconciliations (mirrored);
 """
 
 
@@ -324,6 +340,86 @@ class Store:
         with self.db:
             for i in ids:
                 self.db.execute("update engine_decisions set mirrored = 1 where id = ?", (i,))
+
+    # ------------------------------------------------------------- execution (M4)
+    def _upsert_keyed(self, table: str, key_col: str, key: str, trade_date: str, run_id: str, symbol: str | None, status: str,
+                      payload: dict[str, Any], now: datetime, extra: dict[str, Any] | None = None) -> None:
+        cols = [key_col, "trade_date", "run_id"] + (["symbol"] if symbol is not None else []) + ["status"] + list(extra or {}) + ["payload", "updated_at", "mirrored"]
+        vals = [key, trade_date, run_id] + ([symbol] if symbol is not None else []) + [status] + list((extra or {}).values()) + \
+               [json.dumps(payload, separators=(",", ":"), default=str), iso(now), 0]
+        sets = ", ".join(f"{c}=excluded.{c}" for c in cols if c != key_col)
+        with self.db:
+            self.db.execute(f"insert into {table} ({', '.join(cols)}) values ({', '.join('?' * len(cols))}) on conflict({key_col}) do update set {sets}", vals)
+
+    def _rows(self, table: str, where: str, args: tuple[Any, ...], order: str, limit: int | None = None) -> list[dict[str, Any]]:
+        q = f"select * from {table}" + (f" where {where}" if where else "") + f" order by {order}" + (f" limit {int(limit)}" if limit else "")
+        rows = [dict(r) for r in self.db.execute(q, args)]
+        for r in rows:
+            r["payload"] = json.loads(r["payload"])
+        return rows
+
+    def _mark(self, table: str, key_col: str, key: str, updated_at: str) -> None:
+        with self.db:
+            self.db.execute(f"update {table} set mirrored = 1 where {key_col} = ? and updated_at = ?", (key, updated_at))
+
+    def upsert_paper_order(self, row: dict[str, Any], trade_date: str, run_id: str, now: datetime) -> None:
+        self._upsert_keyed("paper_orders", "ticket_id", row["ticket_id"], trade_date, run_id, row["symbol"], row["status"], row, now,
+                           extra={"engine_key": row["engine_key"]})
+
+    def paper_orders(self, trade_date: str | None = None) -> list[dict[str, Any]]:
+        return self._rows("paper_orders", "trade_date = ?" if trade_date else "", (trade_date,) if trade_date else (), "ticket_id")
+
+    def dirty_paper_orders(self, limit: int = 200) -> list[dict[str, Any]]:
+        return self._rows("paper_orders", "mirrored = 0", (), "updated_at", limit)
+
+    def mark_paper_order_mirrored(self, ticket_id: str, updated_at: str) -> None:
+        self._mark("paper_orders", "ticket_id", ticket_id, updated_at)
+
+    def upsert_paper_trade(self, row: dict[str, Any], trade_date: str, run_id: str, now: datetime) -> None:
+        self._upsert_keyed("paper_trades", "engine_key", row["engine_key"], trade_date, run_id, row["symbol"], row["status"], row, now,
+                           extra={"realized_r": row.get("realized_r")})
+
+    def paper_trades(self, trade_date: str | None = None) -> list[dict[str, Any]]:
+        return self._rows("paper_trades", "trade_date = ?" if trade_date else "", (trade_date,) if trade_date else (), "engine_key")
+
+    def open_paper_trades(self) -> list[dict[str, Any]]:
+        return self._rows("paper_trades", "status in ('working','open','closing','partial')", (), "engine_key")
+
+    def dirty_paper_trades(self, limit: int = 200) -> list[dict[str, Any]]:
+        return self._rows("paper_trades", "mirrored = 0", (), "updated_at", limit)
+
+    def mark_paper_trade_mirrored(self, engine_key: str, updated_at: str) -> None:
+        self._mark("paper_trades", "engine_key", engine_key, updated_at)
+
+    def upsert_approval(self, row: dict[str, Any], trade_date: str, run_id: str, now: datetime) -> None:
+        self._upsert_keyed("approvals", "proposal_id", row["proposal_id"], trade_date, run_id, None, row["status"], {**row, "engine_key": row["engine_key"]}, now,
+                           extra={"engine_key": row["engine_key"]})
+
+    def approvals(self, trade_date: str | None = None) -> list[dict[str, Any]]:
+        return self._rows("approvals", "trade_date = ?" if trade_date else "", (trade_date,) if trade_date else (), "proposal_id")
+
+    def dirty_approvals(self, limit: int = 200) -> list[dict[str, Any]]:
+        return self._rows("approvals", "mirrored = 0", (), "updated_at", limit)
+
+    def mark_approval_mirrored(self, proposal_id: str, updated_at: str) -> None:
+        self._mark("approvals", "proposal_id", proposal_id, updated_at)
+
+    def insert_reconciliation(self, ts: datetime, trade_date: str, run_id: str, ok: bool, payload: dict[str, Any]) -> int:
+        with self.db:
+            cur = self.db.execute("insert into reconciliations (ts, trade_date, run_id, ok, payload, mirrored) values (?,?,?,?,?,0)",
+                                  (iso(ts), trade_date, run_id, 1 if ok else 0, json.dumps(payload, separators=(",", ":"), default=str)))
+            return int(cur.lastrowid)
+
+    def reconciliations(self, trade_date: str | None = None) -> list[dict[str, Any]]:
+        return self._rows("reconciliations", "trade_date = ?" if trade_date else "", (trade_date,) if trade_date else (), "id")
+
+    def dirty_reconciliations(self, limit: int = 200) -> list[dict[str, Any]]:
+        return self._rows("reconciliations", "mirrored = 0", (), "id", limit)
+
+    def mark_reconciliations_mirrored(self, ids: Iterable[int]) -> None:
+        with self.db:
+            for i in ids:
+                self.db.execute("update reconciliations set mirrored = 1 where id = ?", (i,))
 
     # -------------------------------------------------------------------- kv
     def set_kv(self, key: str, value: str) -> None:

@@ -5,7 +5,7 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-10-02T20:33:25Z",
+  "last_touched": "2026-10-02T22:58:54Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
@@ -47,7 +47,7 @@
     }
   ],
   "current_milestone": 4,
-  "next_action": "Start M4 (paper execution + approval mode + dashboard) in a new 'M4 build' chat with the Mac linked: build src/daemon/saa_daemon/execution/ \u2014 tastytrade sandbox order path (limit at mid, retry ladder, fill logging, reconciliation every 30 s, kill switch = file flag + /halt) consuming the Engine's 'open'/'close' events as order intents and gated on feed_lag.mode == realtime (D19) plus Telegram approval flow (Proposed \u2026 Approve / Skip, 3-min timeout = Skip) and the read-only Next.js dashboard on Vercel; acceptance per SPEC M4 (\u22653 sandbox round trips reconciled, /halt flattens within 10 s, timeout logged as Skip, Playwright screenshot of the dashboard with live sandbox data). First concrete step: read src/daemon/saa_daemon/engine/engine.py event emission + saa.engine_decisions, then write execution/orders.py with a FakeBroker and tests before touching the sandbox. Verify: pytest src/tests -q (88 green) and the sandbox round trips in saa.run_log.",
+  "next_action": "M4 in progress (session 9): building src/daemon/saa_daemon/execution/ test-first against a FakeBroker; if interrupted, resume at the first failing test in src/tests/test_execution_*.py and run pytest src/tests -q.",
   "blockers": [],
   "open_questions": [],
   "sessions": 6,

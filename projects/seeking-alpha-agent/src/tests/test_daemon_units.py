@@ -397,7 +397,8 @@ async def test_mirror_flush_and_queue(env_file: Path, tmp_path: Path):
     st.upsert_halts([{"symbol": "ABCD", "halt_time": "2026-09-28T13:45:12Z", "reason_code": "LUDP", "source": "nasdaq_rss"}])
     m.queue("saa_log_run", {"p_job": "daemon:start", "p_ok": True, "p_detail": {}}, t0)
     out = await m.flush_all()
-    assert out == {"queue": 1, "bars": 1, "snapshots": 1, "vix": 1, "halts": 1, "engine_trades": 0, "engine_decisions": 0}
+    assert out == {"queue": 1, "bars": 1, "snapshots": 1, "vix": 1, "halts": 1, "engine_trades": 0, "engine_decisions": 0,
+                   "paper_orders": 0, "paper_trades": 0, "approvals": 0, "reconciliations": 0}
     fns = [c[0] for c in http.calls]
     assert fns == ["saa_log_run", "saa_bars_upsert", "saa_chain_snapshot", "saa_snapshot", "saa_halts_upsert"]
     bars_call = dict(http.calls)["saa_bars_upsert"]
@@ -421,7 +422,8 @@ async def test_mirror_flush_and_queue(env_file: Path, tmp_path: Path):
     # disabled mirror is a no-op everywhere
     s2 = config.load_settings(env_file, environ={"SAA_MIRROR": "false"}, state_dir=tmp_path)
     m2 = SupabaseMirror(s2, st, http)
-    assert not m2.enabled and await m2.flush_all() == {"queue": 0, "bars": 0, "snapshots": 0, "vix": 0, "halts": 0, "engine_trades": 0, "engine_decisions": 0}
+    assert not m2.enabled and await m2.flush_all() == {"queue": 0, "bars": 0, "snapshots": 0, "vix": 0, "halts": 0, "engine_trades": 0, "engine_decisions": 0,
+                                                     "paper_orders": 0, "paper_trades": 0, "approvals": 0, "reconciliations": 0}
     with pytest.raises(MirrorError):
         await m2.rpc("saa_log_run", {})
 

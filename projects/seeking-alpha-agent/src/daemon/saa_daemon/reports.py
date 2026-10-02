@@ -50,9 +50,25 @@ def heartbeat_text(ctx: dict[str, Any]) -> str:
         _gamma_line("SPY pre-open", ctx.get("gamma")),
         f"Halts so far: {ctx.get('halts', 0)} · Econ today: {'; '.join(econ) if econ else '—'}",
         _engine_heartbeat_line(ctx.get("engine"), lag),
-        f"Mirror: {'Supabase on' if ctx.get('mirror') else 'OFF (SQLite only)'} · shadow trades only, no orders (M3)",
+        _paper_heartbeat_line(ctx.get("execution"), ctx.get("telegram_bot")),
+        f"Mirror: {'Supabase on' if ctx.get('mirror') else 'OFF (SQLite only)'}",
     ]
     return "\n".join(lines)
+
+
+def _paper_heartbeat_line(ex: dict[str, Any] | None, bot: dict[str, Any] | None) -> str:
+    """execution summary → one line: account, mode, approval channel, kill switch state."""
+    if not ex:
+        return "Paper: not loaded"
+    if ex.get("off"):
+        return f"Paper: OFF ({ex.get('reason') or 'unknown'})"
+    appr = ex.get("approvals") or {}
+    timeout = int(appr.get("timeout_s") or 180)
+    channel = "Telegram buttons" if (bot or {}).get("configured") else "NO approval channel (every entry fails closed)"
+    halt = ex.get("halt_info") or {}
+    state = f"HALTED since {str(halt.get('at', ''))[11:16]} ({halt.get('reason', '')})" if ex.get("halted") else "kill switch armed (/halt)"
+    return (f"Paper: sandbox {ex.get('account_masked', '?')} · {ex.get('mode', 'approval')} mode via {channel} ({timeout // 60}-min timeout = Skip)"
+            f" · {state} · gated on real-time feed")
 
 
 def _engine_heartbeat_line(eng: dict[str, Any] | None, lag: dict[str, Any]) -> str:
@@ -113,8 +129,24 @@ def eod_text(stats: dict[str, Any]) -> str:
         + (f" · {pushed.get('engine_trades', 0)} ledger rows" if pushed.get("engine_trades") else "") + f" · queue {m.get('queue', 0)} · failures {m.get('failures', 0)}",
         f"Telegram: {tg_desc}",
     ]
-    lines[7:7] = _engine_eod_lines(stats.get("engine"), feed)
+    lines[7:7] = _engine_eod_lines(stats.get("engine"), feed) + _paper_eod_lines(stats.get("execution"))
     return "\n".join(lines)
+
+
+def _paper_eod_lines(ex: dict[str, Any] | None) -> list[str]:
+    if not ex:
+        return ["Paper: not loaded"]
+    if ex.get("off"):
+        return [f"Paper: OFF ({ex.get('reason') or 'unknown'})"]
+    c = ex.get("counts") or {}
+    rec = ex.get("last_reconcile") or {}
+    rec_s = ("ok" if rec.get("ok") else f"⚠ {rec.get('mismatches', 0)} mismatch(es)") if rec else "none"
+    halts = ex.get("halt_events") or []
+    halt_s = "".join(f" · HALT by {h.get('by')} flat in {h.get('seconds')}s" for h in halts)
+    return [f"Paper: {c.get('proposed', 0)} proposed · ✅{c.get('approved', 0)} ⏭{c.get('skipped', 0)} ⏱{c.get('timeout', 0)} ✖{c.get('expired', 0)}"
+            f" · {c.get('filled', 0) + c.get('partial', 0)} filled · {c.get('unfilled', 0)} unfilled · {c.get('rejected', 0)} rejected"
+            f" · {c.get('blocked', 0)} blocked · {c.get('refused', 0)} refused · {ex.get('closed', 0)} closed → {ex.get('realized_r', 0):+.2f}R (${ex.get('realized_pnl', 0):+,.0f})"
+            f" · {ex.get('open', 0)} open · reconcile {rec_s} ({c.get('reconciliations', 0)}×){halt_s}" + (" · HALTED" if ex.get("halted") else "")]
 
 
 def _engine_eod_lines(eng: dict[str, Any] | None, feed: dict[str, Any]) -> list[str]:
