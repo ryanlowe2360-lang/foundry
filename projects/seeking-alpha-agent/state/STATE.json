@@ -5,7 +5,7 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-10-01T23:10:53Z",
+  "last_touched": "2026-10-02T20:33:25Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
@@ -18,7 +18,7 @@
     {
       "id": 2,
       "name": "Daemon core: data plane (plan M2 part 1)",
-      "status": "in-progress",
+      "status": "done",
       "acceptance": "Full sandbox session run logs heartbeat, >=380 1-min bars per index symbol, chain snapshots every 5 min, zero unhandled exceptions; pytest green; saa.run_log shows the run."
     },
     {
@@ -46,13 +46,11 @@
       "acceptance": "Unattended live session with trades reported; forced Tier 1 breach refused and logged in sandbox; status review until Ryan ships."
     }
   ],
-  "current_milestone": 2,
-  "next_action": "Two Ryan steps, then M4. (1) Close M2: Friday 2026-10-02 before 09:20 ET, Mac awake, Terminal: cd \"$HOME/Desktop/Seeking Alpha Agent /agent/daemon\" && ./run.sh session (v0.3.0 is deployed and checksum-verified; a ./run.sh smoke beforehand shows the new feed_lag + engine rows). Next Claude session: read the EOD Telegram text + select * from saa.run_log where job = 'daemon:session' order by ts desc limit 1 + select stats from saa.daemon_runs order by started_at desc limit 1; require bars.complete >= 380 for SPY/QQQ/IWM, snapshots per underlying == 80, unhandled == 0 \u2192 foundry.py touch --milestone 2 --milestone-status done --current-milestone 4. Read stats.feed.mode: if DELAYED the engine ran observe-only (expected until the tastytrade market-data entitlement is fixed \u2014 open question; the smoke's feed_lag row and token 'level', and whether the account is funded/settled, are the clues); if realtime, stats.engine.counts shows the first live gate evaluations and stats.engine.positions the first real-mark shadows. (2) Run migration 0007 part 2 (engine_decisions retention via cron.alter_job \u2014 SQL in src/supabase/migrations/0007_engine_ledger.sql) from the Supabase SQL editor. Then start M4 (paper execution + approval mode + dashboard) in src/daemon/saa_daemon/execution/ \u2014 first step: sandbox order path behind the same feed gate, reusing Engine events 'open'/'close' as order intents; M4 prerequisite: confirm the Cash sandbox account \u20269103 can buy long calls/puts. Verify: pytest src/tests -q (87 passed).",
+  "current_milestone": 4,
+  "next_action": "Start M4 (paper execution + approval mode + dashboard) in a new 'M4 build' chat with the Mac linked: build src/daemon/saa_daemon/execution/ \u2014 tastytrade sandbox order path (limit at mid, retry ladder, fill logging, reconciliation every 30 s, kill switch = file flag + /halt) consuming the Engine's 'open'/'close' events as order intents and gated on feed_lag.mode == realtime (D19) plus Telegram approval flow (Proposed \u2026 Approve / Skip, 3-min timeout = Skip) and the read-only Next.js dashboard on Vercel; acceptance per SPEC M4 (\u22653 sandbox round trips reconciled, /halt flattens within 10 s, timeout logged as Skip, Playwright screenshot of the dashboard with live sandbox data). First concrete step: read src/daemon/saa_daemon/engine/engine.py event emission + saa.engine_decisions, then write execution/orders.py with a FakeBroker and tests before touching the sandbox. Verify: pytest src/tests -q (88 green) and the sandbox round trips in saa.run_log.",
   "blockers": [],
-  "open_questions": [
-    "Market-data entitlement: production DXLink measured 15-minute DELAYED on 2026-09-28 (median 901 s during the session). Ryan funded the account and reports real-time quotes in the tastytrade app (2026-10-01). An after-hours smoke cannot measure it (dxfeed Trade = regular-session last sale; the smoke now says so). Confirm Friday 2026-10-02: ./run.sh smoke between 09:30 and 16:00 ET \u2192 feed_lag row real-time, or the EOD report's 'Feed: \u2026 lag Ns real-time' / engine line 'live eval'. Until then the engine runs observe-only by design (D19)."
-  ],
-  "sessions": 5,
+  "open_questions": [],
+  "sessions": 6,
   "tags": [
     "trading",
     "options",

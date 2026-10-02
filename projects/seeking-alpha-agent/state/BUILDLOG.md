@@ -2,6 +2,28 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-10-02 — session 8 (M2 acceptance run — DONE)
+
+- **The run (Ryan's Mac, from home, started by hand 09:08 ET, run `2026-10-02-090816-session`, daemon v0.3.0):** 09:08→16:25,
+  **0 unhandled exceptions, errors caught: none, 0 reconnects**, 9,863,025 feed events.
+- **Acceptance, criterion by criterion (EOD Telegram report + `saa.daemon_runs` + `saa.run_log` `daemon:session` ok=true +
+  direct counts in `saa.bars_1m` / `saa.chain_snapshots`, all agreeing):**
+  1. Heartbeat logged (09:25, outbox) — ✓.
+  2. ≥380 one-minute bars per index symbol — **SPY 390/390, QQQ 390/390, IWM 390/390** (9 of 12 underlyings 390/390; SYNA 389,
+     gap 14:53 — a thin name, not the feed) — ✓.
+  3. ≥1 chain snapshot per active symbol every 5 min — **80 snapshots on all 12 underlyings (expected 80)**, 650 option symbols — ✓.
+  4. Zero unhandled exceptions — ✓. 5. `pytest src/tests` green (88 at the M3 close) — ✓. 6. `saa.run_log` shows the run — ✓.
+  Mirror: 29,898 bar upserts, 1,106 snapshots, 84 VIX, 130 ledger rows, queue 0, failures 0.
+- **Milestone 2 marked done.** Current milestone → 4 (M3 was closed offline-verified on 2026-10-01, session 6).
+- **Still open — market-data entitlement:** feed lag **1110 s median in the report / 1369.6 s at close → still DELAYED** even though
+  Ryan funded the account on 10/01 and sees real-time quotes in the tastytrade app. So the delay is on the API/streamer
+  entitlement, not account funding. The engine correctly ran observe-only all day (`feed_not_realtime` stand-downs 12;
+  366 gate evaluations, 0 fired; 15 fast-lane shadows closed, +0.12R). M4's paper orders can be built, but nothing can be
+  evaluated live until this is fixed — Ryan to ask tastytrade support about real-time data on the API quote token (the
+  smoke's `quote_token … (level …)` row is the clue to quote them).
+- **Also noted:** launchd did not start the daemon (macOS TCC refuses a LaunchAgent in ~/Desktop — see the plist header);
+  Ryan started it by hand at 09:08, which is fine. The Full Disk Access fix for /bin/bash is documented in the plist.
+
 ## 2026-10-01 — session 7 (housekeeping chat: retention line, launchd fix, M4 sandbox-account check — setup only, no engine/M4 work)
 
 - **Item 1 — migration 0007 part 2 DONE (19:09 ET):** `saa.engine_decisions` retention (120 days) added to the `saa_housekeeping`
