@@ -163,3 +163,40 @@ marked at real DXLink bids** — still no orders. What you will notice:
 
 Sizing is at the one-contract floor until the ledger has trades (the posterior starts shrunk to breakeven — plan §3),
 and the 10-day M1 record streak remains the gate before any sizing above the floor is trusted.
+
+## 8. M4 — paper execution in the sandbox (v0.4.0): what changes for you
+
+Same `./run.sh session`; the daemon now **proposes** every gate-fired entry on Telegram and places it in the sandbox
+account only after you tap **✅ Approve** (⏭ Skip or no answer within 3 minutes = Skip, logged). Exits need no tap.
+Nothing happens on a delayed feed (D19) — until tastytrade fixes the API data entitlement the paper path stays idle,
+exactly like the engine.
+
+**Before the first paper order (one-time):**
+
+1. `.env` must have `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` (you already do) — the buttons need the Bot API directly.
+2. Confirm the sandbox account can buy long calls/puts. `./run.sh smoke` prints its options level; "Covered And Cash
+   Secured" (a Cash account) may reject `Buy to Open` on a long option. If it does, raise the level or create a margin
+   sandbox account at developer.tastytrade.com, then re-run `get_sandbox_token.py` for the new refresh token.
+3. Run the three self-tests — they are the M4 acceptance evidence and each writes a `saa.run_log` row:
+   ```bash
+   ./run.sh paper-roundtrip --n 3        # buy 1 contract at mid → sell to close, three times, reconciled
+   ./run.sh halt-test                    # buy 1, kill switch → flat; prints the seconds (needs ≤ 10)
+   ./run.sh approval-test                # a test proposal; tap Approve or Skip, or wait 3 min to see "timeout → Skip"
+   ```
+   Outside regular hours (or while the feed is delayed) add `--allow-delayed` to the first two: the sandbox fills either
+   way, but the quote is then stale and the row says so. Run them on a real-time feed once that exists.
+
+**Day to day:**
+
+- Heartbeat gets a `Paper:` line (account, approval mode, kill switch state); EOD gets the paper tally (proposed /
+  approved / skipped / timeout / filled / closed / realized R / reconcile ok).
+- `/halt` in Telegram flattens every sandbox position within seconds and blocks entries until `/resume`. `./run.sh halt`
+  does the same from a terminal (a `state/HALT` file; the daemon notices within 2 s). The M1 edge-function `/halt` still
+  works too (the daemon checks `saa.settings.halt` every 30 s).
+- `/status` and `/positions` answer from the daemon while it runs.
+- Expect a `RECONCILE ⚠` message if the sandbox ever holds a position the daemon did not open (it will also be
+  flattened on the next `/halt`).
+
+**Dashboard:** `src/dashboard/README.md` — a read-only page on Vercel (ledger, R histogram, expectancy, posterior p/W,
+Brier, growth toward $5M, paper panel). Deploy takes ~5 minutes; the page needs the Supabase service-role key as a
+server-side env var and an access key you choose.

@@ -2,6 +2,98 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-10-02 — session 9 ("M4 build": paper execution + approval mode + dashboard — built and verified offline; live sandbox evidence is Ryan's)
+
+- **Ruling applied:** the order path sits behind the same real-time gate as the engine (D19) and was built test-first against a
+  FakeBroker before any sandbox code; `.env` values are only ever read in code. The Mac bridge dropped ~45 min into the session
+  and did not come back in time for a direct deploy → v0.4.0 bundle delivered as a tarball with checksums (see "Deploy").
+- **Did (daemon v0.4.0, Foundry commits `b1fcea0` → `5e52562` → `53db2c5` → this one):**
+  - New package `src/daemon/saa_daemon/execution/`: `symbols.py` (streamer ↔ OCC, penny-pilot ticks), `broker.py` (Broker
+    protocol + `FakeBroker` with market / at-limit / never / partial / reject modes and a live quote source),
+    `tastytrade_broker.py` (SDK 13.2.3 `LimitOrder`/`MarketOrder`/`Leg`, `PlacedOrder` → `BrokerOrder`, positions, balances;
+    sandbox only, `buy_to_open` / `sell_to_close` only), `orders.py` (limit-at-mid retry ladder: mid → 3 rungs of 5 s to the far
+    side → 5 s grace → cancel; partial fills never replaced; flatten ladder bid → bid − step at 3 s → market at 6 s; every
+    placement/replace/fill/cancel logged to `paper_orders`), `approvals.py` (Proposed … ✅ Approve / ⏭ Skip; 3-minute timeout =
+    Skip as status `timeout`; expired when the engine closes first; fails closed without a channel), `telegram_bot.py` (direct
+    Bot API: buttons, edits, answerCallbackQuery, long-poll with shared offset, 409 back-off, owner-only), `killswitch.py`
+    (`state/HALT` file + `saa.settings.halt`), `executor.py` (engine open/bank/close → blocked / refused / proposal → ladder →
+    open → exit; Tier 1 caps re-checked at the live ask; `halt()` flattens everything incl. unknown sandbox positions and
+    reports seconds; `reconcile()` every 30 s; realized R and slippage per trade; `auto` mode refused until M6).
+  - Daemon wiring: `load_execution()` after the engine (sandbox `TastytradeBroker`, `TelegramBot`, honours `saa.settings.halt`
+    and the HALT file at start), events handed to the executor from `engine_tick` (incl. the final tick's forced closes), tasks
+    `reconcile` (30 s), `killswitch` (2 s), `telegram` (long-poll), `end_of_day()` + a last reconciliation before the EOD text;
+    `/halt /resume /status /positions /help /id` answered by the daemon; heartbeat `Paper:` line, EOD paper line, `run_log
+    daemon:session` carries the execution summary; `SAA_EXECUTION` setting; smoke gains an `execution` row. Engine: `bank`
+    events emitted for partial banks and `close_all` now emits close events (non-canonical — determinism tests unchanged).
+    Store: `paper_orders`, `paper_trades`, `approvals`, `reconciliations` with mirrored flags; mirror flushes them.
+  - Migration `0008_paper_execution.sql` **applied** (via the connector, 23:24 UTC): tables `saa.paper_trades`, `saa.paper_orders`,
+    `saa.approvals`, `saa.reconciliations` (RLS on, service role only), RPCs `saa_paper_trades_upsert`, `saa_paper_orders_upsert`,
+    `saa_approvals_upsert`, `saa_reconciliations_insert`, `saa_dashboard(p_days)`; grants = service_role only. Round trip inside a
+    rolled-back transaction: insert → update (status closed, realized_r 0.4211) → orders → approvals → reconciliations →
+    `saa_dashboard(90)` assembled 17 ledger rows / 3 stats groups / 1 Brier bucket / the last daemon run; tables empty afterwards.
+    Security advisor: only the intentional RLS-no-policy INFO (23 tables).
+  - Edge function `telegram-send` **v4 deployed** (23:33 UTC): skips `getUpdates` while `daemon_last_seen` < 3 min (D20), accepts
+    `callback_query` and answers stale taps "expired", `/halt` text updated. Verified with `saa.call_function('telegram-send',
+    {"reason":"m4-deploy-check"})` → `run_log` row `ok=true, updates 0`, no `poll_error`.
+  - CLI (`paper.py`, `paper_cli.py`): `paper-roundtrip [--symbol] [--n] [--allow-delayed]`, `halt-test`, `approval-test [--timeout]`,
+    `halt [--reason]`, `resume`, `paper-status` — the M4 acceptance evidence commands, each writing `saa.run_log` `paper:*` rows and
+    `saa.paper_*` rows (D22).
+  - Dashboard `src/dashboard/` (Next.js 15.5, React 19, TypeScript; `npm run build` clean): server-rendered page off `saa_dashboard`
+    with the service-role key server-side, access-key middleware (401 without it, 403 wrong, cookie after `?key=`), `/api/health`;
+    hero equity vs required, required-vs-realized growth (NYSE calendar: 250 trading days → 3.47 %/day), posterior p/W → size
+    (kelly.py port), R histogram (gate / paper / fast lane), expectancy by source, Brier by bucket, paper panel (proposals,
+    reconciliations, recent trades), ledger with paper joins, today + daily records; light + dark from the validated palette;
+    table views under every chart. README with the Vercel steps (D23).
+  - Docs: daemon README (M4 section, CLI, tests), SETUP §8, package/broker docstrings, version 0.4.0.
+- **Verified (evidence):**
+  - `python3 -m pytest src/tests -q` → **135 passed** (88 → 135; pyflakes clean on the new modules). New: `test_execution_orders.py`
+    (15: symbols/ticks/ladder prices; FakeBroker modes; ladder fills at mid, steps 1.15→1.17→1.18→1.20 and fills at the ask in
+    15 s, re-reads a moving quote, gives up after 20 s and cancels, partial, rejected with reason, transport error, outside cancel,
+    flatten reaches market in 6 s), `test_execution_executor.py` (16: approve → fill at mid 1.14 (slip −0.02) → engine close →
+    exit at 1.62 → +$48 / +0.42R with slippage and shadow R; skip; **timeout at 180 s logged as Skip with the `saa.approvals`
+    row**; expired; no channel fails closed; DELAYED feed → `blocked: feed_not_realtime` with no proposal; fast lanes ignored;
+    3 contracts per $1k and $600 premium refused; caps re-checked at the live ask after approval; `auto` mode raises; exit
+    escalation to market; bank 2 of 3; **halt: pending expired, working cancelled, open flattened, stranger IWM position flattened,
+    flat in 6 s, entries blocked after, `/resume` re-arms**; HALT file survives a restart; reconciliation ok / flags a stranger
+    position and an unknown live order once; end of day), `test_execution_bridge.py` (5: SDK order JSON `price 1.14 / Debit`,
+    replace → new id, credit on the sell, market order without price, cancel, live orders, positions, balances, errors →
+    BrokerError, `sell_to_open` refused, prod refused; status mapping; Telegram sendMessage with `inline_keyboard`, edit, "not
+    modified" tolerated, poll dispatch incl. a foreign chat ignored and a 409 that does not advance the offset),
+    `test_execution_session_sim.py` (3 whole days through the real daemon loop with a FakeBroker on the sandbox seat and a scripted
+    Telegram: **round trip** — SPY fires 09:37:02 → `Proposed ▸ SPY long call .SPY260928C…` with buttons → Approve 9 s later →
+    answerCallbackQuery "Approved ✅ placing the paper order" → fill at mid → engine trail/time-stop close → exit fill →
+    `PAPER open/close` alerts, heartbeat `Paper: sandbox …9103 · approval mode via Telegram buttons (3-min timeout = Skip) · kill
+    switch armed (/halt) · gated on real-time feed`, EOD `Paper: 1 proposed · ✅1 ⏭0 ⏱0 ✖0 · 1 filled … 1 closed → ±R · reconcile ok
+    (≈840×)`, every row through `saa_paper_*` RPCs, nothing left dirty, offsets persisted, secrets absent from every call, **and
+    the engine's recording still replays byte for byte**; **halt day** — `/halt` at 09:40 → flat in ≤ 10 s, `HALT ▸ by Ryan`
+    message, `saa.settings.halt` true→false around `/resume`, EOD line carries the halt; **delayed-feed day** — zero proposals,
+    zero orders), `test_paper_cli.py` (8: round trip filled both legs and reconciled with `paper_trades`/`paper_orders` rows,
+    unfilled entry reported, exit escalation, halt-test flat within budget and re-armed, approval-test approve/skip/timeout,
+    `halt`/`resume` commands + status text).
+  - Bundle smoke on a fresh unpack with its own venv: `check` (readiness names the Telegram bot requirement), `halt` → HALT file,
+    `paper-status` shows it, `resume` clears it, `kelly-table` prints the plan table, `import saa_daemon.execution` ok, v0.4.0.
+  - Dashboard: `npm run build` ✓ (route `/` dynamic, middleware 34 kB); Playwright (preinstalled Chromium) screenshots
+    `notes/screenshots/dashboard-live-2026-10-02-{light,dark}.png` from the **real** `saa_dashboard(90)` document (17 ledger rows,
+    15 fast-lane + 2 modeled shadows, Brier 20–40 bucket, feed DELAYED 1370 s, paper panel empty — no sandbox fills exist yet)
+    and `dashboard-demo-paper-{light,dark}.png` from a synthetic document shaped like the simulation (paper panel, equity curve,
+    gate histogram populated — rendering proof only, labelled as such in the fixture). Gate without a key → 401.
+- **Acceptance (spec M4) walked:** (1) ≥ 3 sandbox round trips with fills reconciled — code path proven on the FakeBroker (sim +
+  unit), **live run pending**: `./run.sh paper-roundtrip --n 3` from the Mac; (2) `/halt` flattens within 10 s — 6 s in the
+  simulation and the executor test, **live** `./run.sh halt-test` pending; (3) a timed-out approval is logged as Skip — proven
+  (status `timeout`, note "no answer in 3:00 → skipped", `saa.approvals` row), **live** `./run.sh approval-test` pending;
+  (4) Playwright screenshot with live sandbox data — screenshot made with live *Supabase* data; the sandbox-fill version follows
+  the round trips. **Milestone 4 stays in-progress** until the three CLI runs have written their `saa.run_log` rows.
+- **Deploy:** the Mac bridge dropped at ~23:20 UTC and was still down at the end of the session (two retries each time) → the
+  v0.4.0 deploy bundle `saa-daemon-v0.4.0.tar.gz` (sha256 `a4e5005b…`, 53 files + SHA256SUMS + `install.sh`) was sent in the
+  chat; `tar xzf … && saa-m4-bundle/install.sh` installs into `Desktop/Seeking Alpha Agent /agent/` keeping `.venv/` and
+  `state/`, and verifies every checksum. The Foundry `src/daemon/` is the source of truth either way.
+- **Stopped at:** M4 code complete and verified offline; live evidence needs Ryan (sandbox options level, three CLI runs on the
+  Mac, the Vercel deploy). Resume point in `next_action`.
+- **Lessons:** the Supabase MCP tool applies DDL fine as long as the statement never contains the word "delete" (0008 avoids it;
+  retention for the new tables is unnecessary — a few rows a day). A FakeClock can jump two sleepers at once; latencies that are
+  *by definition* a constant (the approval timeout) are recorded as the constant, not measured. Telegram update ids are assigned on
+  arrival — a scripted fake must do the same or a later message hides behind the offset.
+
 ## 2026-10-02 — session 8 (M2 acceptance run — DONE)
 
 - **The run (Ryan's Mac, from home, started by hand 09:08 ET, run `2026-10-02-090816-session`, daemon v0.3.0):** 09:08→16:25,

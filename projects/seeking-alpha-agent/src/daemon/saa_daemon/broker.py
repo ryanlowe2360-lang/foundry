@@ -2,10 +2,10 @@
 
 * **data** — production OAuth (TT_PROD_*): market data only (DXLink quote tokens, option chains,
   REST market-data). The sandbox has no market data (D11), so this is where quotes come from.
-* **broker** — sandbox OAuth (TT_SANDBOX_*): the account the M4 paper orders will go to. In M2 it is
-  only logged into and read (account number, options level) for the heartbeat.
+* **broker** — sandbox OAuth (TT_SANDBOX_*): the paper account. M2–M3 only read it (account number, options level)
+  for the heartbeat; M4 hands the session to `execution.tastytrade_broker.TastytradeBroker` for sandbox orders.
 
-No order code lives anywhere in this package. Production brokerage is refused by config until M5.
+Order code lives only in `saa_daemon/execution/`. Production brokerage is refused by config until M5.
 """
 from __future__ import annotations
 

@@ -3,6 +3,74 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D23 (2026-10-02) — The dashboard is server-rendered off one RPC with the service-role key; no anon access, access key in front
+
+- **Context:** `saa.*` has RLS on with no policies (service role only, D13); a browser app would need either anon policies or
+  a backend. The spec wants a read-only Next.js page on Vercel.
+- **Chose:** Next.js 15 App Router, dynamic server component, one `POST /rest/v1/rpc/saa_dashboard` with the service-role key
+  from a server-side env var (never `NEXT_PUBLIC_`), middleware gate on `DASHBOARD_ACCESS_KEY` (`?key=` once, then a cookie).
+  `saa_dashboard(p_days)` (migration 0008) assembles the whole document in Postgres (ledger with paper joins, stats by
+  source, R vectors, Brier, paper panel, daemon run, today). The posterior / growth arithmetic is ported to TypeScript
+  (`lib/posterior.ts` = kelly.py; `lib/growth.ts` with the NYSE calendar) for display only — the daemon stays the source of
+  truth. Charts are pure SVG with native tooltips and table views (dataviz palette, ≤ 3 series, legend always).
+  `SAA_DASHBOARD_FIXTURE` renders a saved document (screenshots, offline review). The Vercel deploy itself is Ryan's step
+  (his account); `deploy_url` goes into STATE when it exists.
+- **Revisit if:** more than one reader needs it (then real auth), or the document grows past a comfortable single RPC
+  (then split reads / cache).
+
+## D22 (2026-10-02) — M4 acceptance evidence comes from three CLI self-tests run on the Mac; `--allow-delayed` is an explicit, recorded exception
+
+- **Context:** the cloud build box and the linked Mac shell cannot reach tastytrade, so sandbox round trips, the halt test
+  and a real Telegram proposal can only run from Ryan's terminal. The production feed is still delayed (open question),
+  so the strict D19 gate would make the plumbing untestable until tastytrade fixes the entitlement.
+- **Chose:** `./run.sh paper-roundtrip [--n 3]`, `halt-test`, `approval-test` — each runs the production code path
+  (`OrderManager.work/flatten`, `Executor.halt`, `ApprovalGate` + `TelegramBot.poll`) against the real sandbox / Bot API and
+  writes a `saa.run_log` row (`paper:roundtrip`, `paper:halt_test`, `paper:approval_test`) plus `saa.paper_trades` /
+  `saa.paper_orders` / `saa.approvals` rows, so the evidence is in the database, not in a chat. The entry quote is probed
+  from production DXLink and the feed lag measured first; if it is not real-time the tests refuse unless `--allow-delayed`,
+  which is loud and recorded (`allow_delayed`, `feed.mode`) in the row — a sandbox fill is plumbing evidence, never a
+  decision. The approval test keeps `daemon_last_seen` fresh so the edge function leaves `getUpdates` to it (D20).
+- **Revisit if:** tastytrade's real-time entitlement arrives (then drop the flag from the instructions) or a paper harness
+  with real fills (M5 VPS) makes the sandbox tests redundant.
+
+## D21 (2026-10-02) — Execution policy: D19 gate on the order path, Tier 1 caps re-checked at the order, approval for entries only, no auto mode before M6
+
+- **Context:** the engine already refuses to fire on a delayed feed and sizes inside the Tier 1 caps, but the executor is a
+  second actor with its own failure modes (a stale approval, a mark that moved while Ryan thought, a stranger position).
+- **Chose:** (a) every gate-fired open is re-checked by the executor: kill switch → `feed_lag.mode == realtime` (D19, belt
+  and braces) → Tier 1 order caps at the engine's ask, and again at the **live** ask after approval (≤ 2 contracts per $1k,
+  ≤ 50 % of the account) → `blocked` / `refused` rows, never an order. (b) Entries need Approve; **exits never do** — a
+  close, a bank or a halt is risk reduction. (c) Fast-lane hypotheses never trade. (d) `ExecutionPolicy.mode` is
+  `approval`; `auto` raises until `ALLOW_AUTO_MODE` flips in M6. (e) Ladder: mid rounded toward the far side, 3 rungs of
+  5 s to the far side, 5 s grace, cancel; a partially filled order is never replaced (tastytrade rejects it) — it rests and
+  is cancelled at the end, the executor then closes the filled part. An exit whose ladder fails escalates to the flatten
+  ladder (bid → bid − step at 3 s → market at 6 s). (f) `halt()` expires proposals, cancels working orders, flattens every
+  open paper position **and any sandbox position the book does not know**, reports seconds to flat (budget 10 s; the
+  simulations flatten in 6 s). The HALT file survives restarts; `saa.settings.halt` is kept in step so the M1 `/halt` path
+  still works and a halted daemon starts halted. (g) Realized R = (proceeds − cost − fees) ÷ cost; slippage vs the
+  engine's ask/bid recorded per trade so the shadow ledger's marks can be audited against fills.
+- **Revisit if:** fills show the 5-second rungs too slow for 0DTE (then shorten / add a marketable-limit first rung), or
+  M5's live account needs per-contract fees in the sizing (then the fee model lands in kelly.size_position).
+
+## D20 (2026-10-02) — Telegram approvals: the daemon long-polls the Bot API itself; the `telegram-send` edge function stands down while the daemon is alive
+
+- **Context:** M1's `telegram-send` edge function polls `getUpdates` (every 2 min and on every outbox insert) for `/start`,
+  `/halt` etc. Telegram allows one `getUpdates` consumer per bot (409 Conflict otherwise), the outbox path cannot carry
+  inline buttons, and a 3-minute approval needs second-level latency.
+- **Options:** (a) a Telegram webhook into the edge function + the daemon polling Supabase for decisions every 2 s (more
+  surgery on live M1 infra, needs `setWebhook` with the token, a permanent change of delivery mode); (b) the daemon polls
+  directly and the function skips polling while `saa.settings.daemon_last_seen` is fresh (< 3 min), both sharing
+  `saa.settings.telegram_update_offset`.
+- **Chose:** (b). `execution/telegram_bot.py` sends proposals with Approve / Skip buttons, edits them with the decision,
+  answers callbacks, handles `/halt /resume /status /positions /help /id`, honours only the owner's chat, backs off on 409.
+  `telegram-send` v4 (deployed 2026-10-02 23:33 UTC, verified `ok` with 0 poll errors): `daemonAlive()` → `poll_skipped`,
+  `allowed_updates` now includes `callback_query`, a tap that reaches it while the daemon is down is answered "expired".
+  The daemon loads the shared offset at start and writes it back after every batch, so neither side re-reads the other's
+  updates. The `/halt` typed while the daemon is not polling still lands in `saa.settings.halt`, which the daemon checks
+  every reconciliation (30 s) and at start.
+- **Revisit if:** a second bot or a group chat is wanted (then a webhook + router), or the 3-minute overlap at daemon start
+  produces visible 409s (then bump `DAEMON_ALIVE_MS` or signal the hand-over explicitly).
+
 ## D19 (2026-10-01) — Live evaluation is gated on a real-time feed; everything else in M3 is testable offline
 
 - **Context:** the production DXLink feed measured 15 minutes delayed on 2026-09-28 (open question, cause unconfirmed). A

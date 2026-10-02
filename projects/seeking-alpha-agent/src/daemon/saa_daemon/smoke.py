@@ -12,7 +12,7 @@ from typing import Any
 
 from . import __version__
 from .chains import from_sdk_nested, plan_chain
-from .clock import et, is_trading_day
+from .clock import Clock, et, is_trading_day
 from .config import Settings, readiness
 from .halts import fetch_halts
 from .http import Httpx2Client, certifi_client
@@ -209,6 +209,39 @@ async def run_smoke(settings: Settings, *, telegram: bool = True) -> int:
         detail.update(rules_version=rules.version, engine_posterior_n=post.n)
     except Exception as e:  # noqa: BLE001
         rep.add("engine", "FAIL", f"{type(e).__name__}: {str(e)[:120]}")
+
+    # Execution (M4): the sandbox account can be read through the order-path broker, the Telegram bot is configured,
+    # the kill switch state is known. No order is placed by the smoke (that is `paper-roundtrip`).
+    try:
+        from .execution import KillSwitch
+        from .execution.telegram_bot import TelegramBot
+
+        bits = []
+        if brk.broker is not None:
+            try:
+                from .execution.tastytrade_broker import TastytradeBroker
+                tb = await TastytradeBroker.open(brk.broker, env=settings.broker_env)
+                pos = await tb.positions()
+                live = await tb.live_orders()
+                bal = await tb.balances()
+                bits.append(f"sandbox {tb.account_masked}: {len(pos)} position(s), {len(live)} live order(s), net liq {bal.get('net_liquidating_value')}")
+                detail.update(paper_positions=len(pos), paper_live_orders=len(live))
+                exec_ok = True
+            except Exception as e:  # noqa: BLE001
+                bits.append(f"sandbox broker FAILED: {type(e).__name__}: {str(e)[:100]}")
+                exec_ok = False
+        else:
+            bits.append("sandbox session missing → paper execution OFF")
+            exec_ok = False
+        bot = TelegramBot(settings, http, Clock())
+        bits.append("Telegram bot configured (approval buttons + /halt)" if bot.configured else "Telegram bot NOT configured → every proposal fails closed")
+        ks = KillSwitch(settings.state_dir)
+        bits.append(f"kill switch {'ENGAGED ' + str(ks.info()) if ks.engaged else 'armed'}")
+        if not settings.execution_enabled:
+            bits.append("SAA_EXECUTION=false (executor off)")
+        rep.add("execution", "PASS" if exec_ok and bot.configured else "WARN", " · ".join(bits))
+    except Exception as e:  # noqa: BLE001
+        rep.add("execution", "FAIL", f"{type(e).__name__}: {str(e)[:120]}")
 
     # Supabase write
     if mirror.enabled:
