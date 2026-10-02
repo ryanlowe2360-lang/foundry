@@ -8,6 +8,11 @@
 // The chat id is captured automatically from the first private message (/start) and stored in
 // saa.settings.telegram_chat_id. Commands: /start /id /status /halt /resume /help.
 //
+// M4: while the daemon is alive (saa.settings.daemon_last_seen within 3 minutes) it long-polls getUpdates itself
+// (approval buttons, /halt within seconds), so this function skips its own getUpdates to avoid the one-consumer
+// conflict. Both sides share saa.settings.telegram_update_offset, so the hand-over in either direction is clean.
+// A button tap that reaches this function (daemon down) is answered with "expired".
+//
 // Deployed with verify_jwt = false; custom auth = x-saa-key header (saa.settings.internal_key).
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { fetchJson, getSetting, json, logRun, requireInternalKey, rpc, setSetting } from "./saa.ts";
@@ -17,6 +22,24 @@ const MAX_LEN = 4000;
 interface TgUpdate {
   update_id: number;
   message?: { message_id: number; text?: string; chat: { id: number; type: string; first_name?: string; username?: string } };
+  callback_query?: { id: string; data?: string; message?: { message_id: number; chat: { id: number } } };
+}
+
+const DAEMON_ALIVE_MS = 3 * 60 * 1000;
+
+/** Postgres `now()::text` ("2026-10-02 20:25:01.068974+00") → epoch ms; NaN when unparseable. */
+export function parsePgTimestamp(s: string): number {
+  let t = s.trim().replace(" ", "T").replace(/(\.\d{3})\d+/, "$1").replace(/([+-]\d{2})$/, "$1:00");
+  if (!/[zZ]|[+-]\d{2}:\d{2}$/.test(t)) t += "Z";
+  return Date.parse(t);
+}
+
+/** True while the daemon's machine heartbeat (saa_daemon_run every 60 s) is fresh — it owns getUpdates then. */
+async function daemonAlive(): Promise<boolean> {
+  const seen = await getSetting("daemon_last_seen");
+  if (!seen) return false;
+  const t = parsePgTimestamp(seen);
+  return Number.isFinite(t) && Date.now() - t < DAEMON_ALIVE_MS;
 }
 
 async function tg(token: string, method: string, body: Record<string, unknown>) {
@@ -58,7 +81,7 @@ async function handleCommand(token: string, chatId: string, text: string) {
     }
     case "/halt":
       await setSetting("halt", "true");
-      await send(token, chatId, "HALT flag set. M1 places no orders; from M2 the daemon flattens and stops when this flag is set. /resume clears it.");
+      await send(token, chatId, "HALT flag set. A running daemon flattens its paper positions and stops entries within 30 s of this flag (it checks it every reconciliation); the next session starts halted until /resume.");
       break;
     case "/resume":
       await setSetting("halt", "false");
@@ -72,6 +95,8 @@ async function handleCommand(token: string, chatId: string, text: string) {
       break;
   }
 }
+
+class SkipPoll extends Error {}
 
 Deno.serve(async (req: Request) => {
   const denied = await requireInternalKey(req);
@@ -100,14 +125,23 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // 1) inbound updates: capture the chat id, answer commands
+  // 1) inbound updates: capture the chat id, answer commands — unless the daemon is alive and polling (M4)
   try {
+    if (await daemonAlive()) {
+      detail.poll_skipped = "daemon alive";
+      throw new SkipPoll();
+    }
     const offset = Number((await getSetting("telegram_update_offset")) ?? "0") || 0;
-    const r = await tg(token, "getUpdates", { offset, timeout: 0, allowed_updates: ["message"] });
+    const r = await tg(token, "getUpdates", { offset, timeout: 0, allowed_updates: ["message", "callback_query"] });
     const updates = (r.ok ? (r.result as TgUpdate[]) : []) ?? [];
     let maxId = offset - 1;
     for (const u of updates) {
       maxId = Math.max(maxId, u.update_id);
+      if (u.callback_query) {
+        // a proposal button tapped while the daemon is down: nothing can be placed any more
+        await tg(token, "answerCallbackQuery", { callback_query_id: u.callback_query.id, text: "The daemon is not running — this proposal has expired." });
+        continue;
+      }
       const m = u.message;
       if (!m || m.chat.type !== "private" || !m.text) continue;
       const from = String(m.chat.id);
@@ -123,7 +157,7 @@ Deno.serve(async (req: Request) => {
     if (updates.length) await setSetting("telegram_update_offset", String(maxId + 1));
     detail.updates = updates.length;
   } catch (e) {
-    detail.poll_error = String(e);
+    if (!(e instanceof SkipPoll)) detail.poll_error = String(e);
   }
 
   // 2) flush the outbox
