@@ -7,10 +7,11 @@ The SDK is imported inside the methods so the rest of the package stays importab
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from .broker import BrokerError, BrokerFill, BrokerOrder, BrokerPosition, error_text
 
@@ -23,6 +24,17 @@ STATUS_MAP = {
     "Rejected": "rejected", "Expired": "expired",
 }
 ACTIONS = {"buy_to_open": "Buy to Open", "sell_to_close": "Sell to Close"}   # long premium only in v1 — nothing else is ever sent
+RETRY_429_S: tuple[float, ...] = (1.0, 2.0)                                     # backoff after a gateway 429, then give up
+
+
+def _is_429(e: BaseException) -> bool:
+    text = str(e)
+    return "429" in text and ("Too Many Requests" in text or "Couldn't parse response" in text)
+
+
+def _warning_text(w: Any) -> str:
+    code, msg = getattr(w, "code", None), getattr(w, "message", None)
+    return f"{code}: {msg}" if code and msg else str(w)
 
 
 def _mask(acct: str | None) -> str:
@@ -53,6 +65,7 @@ class TastytradeBroker:
         self.env = env
         self.account_masked = _mask(getattr(account, "account_number", None))
         self.calls = 0
+        self.retries = 0
         self.last_error: str | None = None
 
     @classmethod
@@ -109,12 +122,28 @@ class TastytradeBroker:
                            reject_reason=getattr(po, "reject_reason", None), external_id=getattr(po, "external_identifier", None),
                            updated_at=getattr(po, "updated_at", None), fees=fees)
 
-    async def _guard(self, what: str, coro: Any) -> Any:
+    async def _call(self, fn: Callable[[], Awaitable[Any]]) -> Any:
+        """One API call with a short retry on the gateway's 429 (the sandbox rate-limits bursts; the error arrives as an
+        HTML page the SDK cannot parse). Everything else propagates to the caller."""
         from tastytrade.utils import TastytradeError
 
-        self.calls += 1
+        for attempt, delay in enumerate(RETRY_429_S + (None,)):
+            self.calls += 1
+            try:
+                return await fn()
+            except TastytradeError as e:
+                if delay is None or not _is_429(e):
+                    raise
+                log.warning("429 from the broker API (attempt %d); retrying in %ss", attempt + 1, delay)
+                self.retries += 1
+                await asyncio.sleep(delay)
+        raise AssertionError("unreachable")
+
+    async def _guard(self, what: str, fn: Callable[[], Awaitable[Any]]) -> Any:
+        from tastytrade.utils import TastytradeError
+
         try:
-            return await coro
+            return await self._call(fn)
         except TastytradeError as e:
             self.last_error = f"{what}: {_msg(e)}"
             raise BrokerError(self.last_error) from e
@@ -129,10 +158,9 @@ class TastytradeBroker:
         The paper self-tests use it to settle on an instrument the sandbox actually trades before any real placement."""
         from tastytrade.utils import TastytradeError
 
-        self.calls += 1
         try:
             order = self._order(self._leg(symbol, action, quantity), action, price)
-            resp = await self.account.place_order(self.session, order, dry_run=True)
+            resp = await self._call(lambda: self.account.place_order(self.session, order, dry_run=True))
         except (TastytradeError, BrokerError) as e:
             return _msg(e)
         except Exception as e:  # noqa: BLE001
@@ -146,12 +174,14 @@ class TastytradeBroker:
         order = self._order(leg, action, price)
         if external_id:
             order.external_identifier = external_id[:64]
-        resp = await self._guard("place", self.account.place_order(self.session, order, dry_run=False))
+        resp = await self._guard("place", lambda: self.account.place_order(self.session, order, dry_run=False))
         fees = _f(getattr(getattr(resp, "fee_calculation", None), "total_fees", None))
         fees = abs(fees) if fees is not None else None         # the SDK signs fees by effect (debit = negative)
-        if getattr(resp, "warnings", None):
-            log.info("order warnings: %s", "; ".join(str(w) for w in resp.warnings)[:300])
+        warnings = [_warning_text(w) for w in (getattr(resp, "warnings", None) or [])]
+        if warnings:
+            log.info("order warnings: %s", "; ".join(warnings)[:300])
         o = self._convert(resp.order, fees=fees)
+        o.warnings = warnings
         if getattr(resp, "errors", None) and o.status != "rejected":
             o.status, o.reject_reason = "rejected", "; ".join(str(e) for e in resp.errors)[:300]
         return o
@@ -160,26 +190,26 @@ class TastytradeBroker:
         old = await self.get_order(order_id)
         leg = self._leg(old.symbol, old.action, old.quantity - old.filled_quantity if old.filled_quantity else old.quantity)
         new = self._order(leg, old.action, price)
-        placed = await self._guard("replace", self.account.replace_order(self.session, int(order_id), new))
+        placed = await self._guard("replace", lambda: self.account.replace_order(self.session, int(order_id), new))
         return self._convert(placed)
 
     async def cancel(self, order_id: str) -> BrokerOrder:
-        await self._guard("cancel", self.account.delete_order(self.session, int(order_id)))
+        await self._guard("cancel", lambda: self.account.delete_order(self.session, int(order_id)))
         return await self.get_order(order_id)
 
     async def get_order(self, order_id: str) -> BrokerOrder:
-        po = await self._guard("get_order", self.account.get_order(self.session, int(order_id)))
+        po = await self._guard("get_order", lambda: self.account.get_order(self.session, int(order_id)))
         return self._convert(po)
 
     async def live_orders(self) -> list[BrokerOrder]:
-        rows = await self._guard("live_orders", self.account.get_live_orders(self.session))
+        rows = await self._guard("live_orders", lambda: self.account.get_live_orders(self.session))
         out = [self._convert(po) for po in rows]
         return [o for o in out if not o.terminal]
 
     async def positions(self) -> list[BrokerPosition]:
         from tastytrade.order import InstrumentType
 
-        rows = await self._guard("positions", self.account.get_positions(self.session, instrument_type=InstrumentType.EQUITY_OPTION))
+        rows = await self._guard("positions", lambda: self.account.get_positions(self.session, instrument_type=InstrumentType.EQUITY_OPTION))
         out = []
         for p in rows:
             q = int(getattr(p, "quantity", 0) or 0)
@@ -192,7 +222,7 @@ class TastytradeBroker:
         return out
 
     async def balances(self) -> dict[str, Any]:
-        b = await self._guard("balances", self.account.get_balances(self.session))
+        b = await self._guard("balances", lambda: self.account.get_balances(self.session))
         keys = ("cash_balance", "net_liquidating_value", "equity_buying_power", "derivative_buying_power", "day_trading_buying_power",
                 "maintenance_requirement", "cash_available_to_withdraw")
         return {k: _f(getattr(b, k, None)) for k in keys if getattr(b, k, None) is not None}

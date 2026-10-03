@@ -62,7 +62,63 @@ async def test_roundtrip_reports_an_unfilled_entry(tmp_path: Path):
     await _drive(clock, task, at(10, 2))
     rt = task.result()
     assert not rt.ok and rt.entry["status"] == "unfilled" and rt.exit["status"] == "skipped" and rt.reconciled
-    assert rt.realized_pnl is None and store.paper_trades(D.isoformat())[0]["status"] == "unfilled"
+    assert rt.realized_pnl is None and store.paper_trades(D.isoformat())[0]["status"] == "unfilled" and rt.note == ""
+
+
+@pytest.mark.asyncio
+async def test_roundtrip_and_halt_test_explain_an_order_parked_for_the_next_session(tmp_path: Path):
+    """Outside regular hours the sandbox accepts an order with `tif.next_valid_session` and never fills it (Ryan's Saturday
+    run): the self-tests say so instead of a bare 'unfilled'."""
+    from saa_daemon.paper import QUEUED_WARNING, queued_note
+    clock = FakeClock(at(10, 0))
+    b = FakeBroker(mode="never")
+    b.now_fn = clock.now
+    b.quotes[OCC] = (4.75, 4.77)
+    b.warnings = [f"{QUEUED_WARNING}: Your order will begin working during next valid session."]
+    store = Store(tmp_path / "saa.sqlite")
+    task = asyncio.create_task(roundtrip(b, store, clock, SYM, (4.75, 4.77), run_id="rt-test", trade_date=D))
+    await _drive(clock, task, at(10, 2))
+    rt = task.result()
+    assert not rt.ok and rt.entry["status"] == "unfilled" and rt.reconciled
+    assert rt.note.startswith("the sandbox queued the order for the next session") and "09:30 and 16:00 ET" in rt.note
+    assert rt.entry["warnings"] == b.warnings and rt.entry["limit_prices"] == [4.76, 4.77]      # SPY ladders in pennies above $3
+    assert rt.note in store.paper_trades(D.isoformat())[0]["payload"]["notes"] and rt.as_dict()["note"] == rt.note
+    out_task = asyncio.create_task(halt_test(b, store, clock, SYM, (4.75, 4.77), run_id="ht-test", trade_date=D, state_dir=tmp_path / "state"))
+    await _drive(clock, out_task, at(10, 4))
+    out = out_task.result()
+    assert not out["ok"] and out["note"].startswith("entry did not fill (unfilled:") and "queued the order for the next session" in out["note"]
+    # a filled order carries no such note even when the broker warned
+    filled = FakeBroker(mode="at_limit")
+    filled.warnings = list(b.warnings)
+    o = await filled.place(OCC, "buy_to_open", 1, 4.76)
+    from saa_daemon.execution import Ticket
+    t = Ticket.new("k", SYM, "buy", 1, 4.75, 4.77, clock.now())
+    t.warnings, t.filled_quantity = list(o.warnings), 1
+    assert queued_note(t) == ""
+
+
+def test_cli_hours_reason_is_blank_only_inside_a_trading_session(tmp_path: Path):
+    from saa_daemon.clock import Schedule
+    from saa_daemon.paper_cli import _Ctx
+    p = tmp_path / ".env"
+    p.write_text("TT_PROD_CLIENT_ID=x\nSAA_MIRROR=false\n", encoding="utf-8")
+    settings = config.load_settings(p, environ={}, state_dir=tmp_path / "state")
+    c = _Ctx(settings, need_broker=False, need_data=False)
+    sat = date(2026, 10, 3)
+    c.clock, c.today, c.sched = FakeClock(et_dt(sat, time(11, 32))), sat, Schedule.for_date(sat)
+    assert c.hours_reason().startswith("Sat 2026-10-03 is not a trading day") and "09:30–16:00 ET" in c.hours_reason()
+    mon = date(2026, 10, 5)
+    c.today, c.sched = mon, Schedule.for_date(mon)
+    for hh, mm, inside in ((9, 29, False), (9, 30, True), (12, 0, True), (15, 59, True), (16, 0, False), (17, 30, False)):
+        c.clock = FakeClock(et_dt(mon, time(hh, mm)))
+        why = c.hours_reason()
+        assert (why == "") is inside, (hh, mm, why)
+        if not inside:
+            assert why.startswith(f"{hh:02d}:{mm:02d} ET is outside regular hours (09:30–16:00)")
+    # an early-close day closes at 13:00
+    nov27 = date(2026, 11, 27)
+    c.today, c.sched, c.clock = nov27, Schedule.for_date(nov27), FakeClock(et_dt(nov27, time(13, 0)))
+    assert c.sched.early_close and c.hours_reason().startswith("13:00 ET is outside regular hours (09:30–13:00)")
 
 
 @pytest.mark.asyncio

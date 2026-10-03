@@ -48,6 +48,7 @@ class BrokerOrder:
     external_id: str | None = None
     updated_at: datetime | None = None
     fees: float | None = None          # total fees the broker quoted for this order (sandbox: usually 0)
+    warnings: list[str] = field(default_factory=list)   # broker warnings at placement (`tif.next_valid_session: …` outside hours)
 
     @property
     def side(self) -> str:
@@ -136,6 +137,7 @@ class FakeBroker:
         self.market_fills = market_fills
         self.fail_next = list(fail_next or [])
         self.untradable: set[str] = set(untradable or ())
+        self.warnings: list[str] = []                     # attached to every order this broker places (sandbox-style warnings)
         self.account_masked = account_masked
         self.cash = cash
         self.quotes: dict[str, tuple[float, float]] = _QuoteBook(quote_fn)
@@ -206,7 +208,7 @@ class FakeBroker:
     def _new(self, symbol: str, action: str, quantity: int, price: float | None, external_id: str | None) -> BrokerOrder:
         oid = f"fk{next(self._ids)}"
         o = BrokerOrder(oid, symbol, action, int(quantity), "market" if price is None else "limit", None if price is None else round(float(price), 2),
-                        "live", external_id=external_id, updated_at=self.now_fn())
+                        "live", external_id=external_id, updated_at=self.now_fn(), warnings=list(self.warnings))
         self.orders[oid] = o
         if self.mode == "reject":
             o.status, o.reject_reason = "rejected", self.reject_reason

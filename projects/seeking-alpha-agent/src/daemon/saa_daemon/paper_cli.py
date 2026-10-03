@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from .clock import Clock, Schedule, et
+from .clock import Clock, Schedule, et, is_trading_day
 from .config import Settings
 from .execution import KillSwitch, LadderPolicy
 from .execution.telegram_bot import TelegramBot
@@ -70,6 +70,21 @@ class _Ctx:
             print(f"run_log write failed ({e}); queued for the next session")
             self.mirror.queue("saa_log_run", {"p_job": job, "p_ok": ok, "p_detail": detail}, self.clock.now())
 
+    def hours_reason(self) -> str:
+        """Non-empty when the clock is outside a trading day's regular session — the sandbox parks orders then."""
+        now = self.clock.now()
+        if not is_trading_day(self.today):
+            return f"{et(now):%a %Y-%m-%d} is not a trading day: the sandbox parks orders for the next session and fills nothing — rerun 09:30–16:00 ET on a trading day"
+        if now < self.sched.open or now >= self.sched.close:
+            return (f"{et(now):%H:%M} ET is outside regular hours ({et(self.sched.open):%H:%M}–{et(self.sched.close):%H:%M}): the sandbox parks orders for the "
+                    "next session and fills nothing — rerun inside the session")
+        return ""
+
+    def hours_notice(self) -> None:
+        why = self.hours_reason()
+        if why:
+            print(f"⚠ {why}; this run proves placement → cancel → reconcile only")
+
     async def entry_quote(self, symbol: str, allow_delayed: bool) -> tuple[EntryPick, Any]:
         """Feed gate, then the validated instrument choice (both chains → sandbox lookup → DXLink quote → sandbox dry
         run). Raises when the feed is not real-time and --allow-delayed is absent, or when no candidate passes."""
@@ -98,6 +113,7 @@ async def run_roundtrip(settings: Settings, *, symbol: str, n: int, allow_delaye
     async with _Ctx(settings) as c:
         pick, feed = await c.entry_quote(symbol, allow_delayed)
         option_symbol, quote = pick.symbol, pick.quote
+        c.hours_notice()
         run_id = f"paper-roundtrip-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
         results = []
         for i in range(max(1, n)):
@@ -115,7 +131,7 @@ async def run_roundtrip(settings: Settings, *, symbol: str, n: int, allow_delaye
         await c.log_run("paper:roundtrip", ok, {"run_id": run_id, "symbol": symbol, "option_symbol": option_symbol, "quote": quote, "pick": pick.as_dict(),
                                                 "feed": {"mode": feed.mode, "lag_s": feed.lag_s, "note": feed.note}, "allow_delayed": allow_delayed,
                                                 "account": c.broker.account_masked, "round_trips": results, "n_ok": sum(1 for r in results if r["ok"])})
-        print("RESULT:", "ALL ROUND TRIPS FILLED AND RECONCILED" if ok else "NOT OK — see above")
+        print("RESULT:", "ALL ROUND TRIPS FILLED AND RECONCILED" if ok else ("NOT OK — " + (c.hours_reason() or "see above")))
         return 0 if ok else 1
 
 
@@ -123,6 +139,7 @@ async def run_halt_test(settings: Settings, *, symbol: str, allow_delayed: bool)
     async with _Ctx(settings) as c:
         pick, feed = await c.entry_quote(symbol, allow_delayed)
         option_symbol, quote = pick.symbol, pick.quote
+        c.hours_notice()
         run_id = f"paper-halt-test-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
         out = await halt_test(c.broker, c.store, c.clock, option_symbol, quote, run_id=run_id, trade_date=c.today, state_dir=settings.state_dir)
         e = out["entry"]
@@ -140,7 +157,7 @@ async def run_halt_test(settings: Settings, *, symbol: str, allow_delayed: bool)
         await c.log_run("paper:halt_test", bool(out.get("ok")), {"run_id": run_id, "symbol": symbol, "option_symbol": option_symbol, "quote": quote, "pick": pick.as_dict(),
                                                                  "feed": {"mode": feed.mode, "lag_s": feed.lag_s}, "allow_delayed": allow_delayed,
                                                                  "account": c.broker.account_masked, **{k: v for k, v in out.items() if k != "trade"}})
-        print("RESULT:", "FLAT WITHIN 10 S" if out.get("ok") else "NOT OK — see above")
+        print("RESULT:", "FLAT WITHIN 10 S" if out.get("ok") else ("NOT OK — " + (c.hours_reason() or "see above")))
         return 0 if out.get("ok") else 1
 
 

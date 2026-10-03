@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import Settings
+from .execution.symbols import set_ticks_from_chain
 from .log import quiet_sdk_loggers
 
 log = logging.getLogger("saa.broker")
@@ -241,4 +242,11 @@ class Brokerage:
         if not chains:
             return None
         std = [c for c in chains if c.option_chain_type.lower().startswith("standard")]
-        return (std or chains)[0]
+        chain = (std or chains)[0]
+        try:
+            rules = set_ticks_from_chain(chain)                 # the exchange's price increments for this class
+            if rules:
+                log.debug("tick rules %s: %s", getattr(chain, "root_symbol", underlying), rules)
+        except Exception as e:  # noqa: BLE001 — a tick table is a nicety; the chain itself must never be lost to it
+            log.warning("tick rules for %s not registered: %s", underlying, e)
+        return chain

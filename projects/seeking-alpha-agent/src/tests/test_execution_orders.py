@@ -56,6 +56,54 @@ def test_ladder_prices_walk_from_mid_to_the_far_side():
     assert ladder_prices("sell", 1.15, 1.16, steps=3) == [1.15]
 
 
+def test_tick_table_by_option_class():
+    from saa_daemon.execution.symbols import PENNY_ALL, PENNY_PROGRAM, nearest_tick, root_of, set_ticks, set_ticks_from_chain, ticks_for
+    # SPY / QQQ / IWM / XSP trade in pennies at every price; other penny-program classes step to $0.05 at $3; unknown = penny program
+    assert tick_size(4.76, "SPY   261009C00770000") == 0.01 and tick_size(4.76, ".QQQ261009C480") == 0.01 and tick_size(9.9, "IWM") == 0.01
+    assert tick_size(4.76, ".NVDA261016C177.5") == 0.05 and tick_size(2.99, ".NVDA261016C177.5") == 0.01 and tick_size(4.76) == 0.05
+    assert ticks_for("SPY") == PENNY_ALL and ticks_for(".ZZZ261009C10") == PENNY_PROGRAM and ticks_for(None) == PENNY_PROGRAM
+    assert root_of(".SPY261009C770") == "SPY" and root_of("SPXW  261009C06500000") == "SPXW" and root_of("nvda") == "NVDA" and root_of("") is None
+    # the broker's chain carries the authoritative rules — a non-penny class steps $0.05 / $0.10
+    class _TS:
+        def __init__(self, value, threshold=None):
+            self.value, self.threshold = value, threshold
+    class _Chain:
+        root_symbol, underlying_symbol = "ZZT", "ZZT"
+        tick_sizes = [_TS("0.05", "3"), _TS("0.1")]
+    assert set_ticks_from_chain(_Chain()) == ((0.05, 3.0), (0.1, None))
+    assert tick_size(1.23, ".ZZT261016C10") == 0.05 and tick_size(3.0, "ZZT") == 0.1 and round_to_tick(1.23, "buy", "ZZT") == 1.25
+    assert round_to_tick(3.21, "sell", "ZZT") == 3.2 and nearest_tick(3.26, "ZZT") == 3.3
+    class _Spy:
+        root_symbol, underlying_symbol = "SPY", "SPY"
+        tick_sizes = [_TS("0.01")]
+    assert set_ticks_from_chain(_Spy()) == PENNY_ALL                       # re-registering SPY from its chain keeps pennies everywhere
+    class _Empty:
+        root_symbol, tick_sizes = "QQQ", []
+    assert set_ticks_from_chain(_Empty()) is None and ticks_for("QQQ") == PENNY_ALL
+    assert set_ticks("ZZU", [(0.05, 3.0)]) == ((0.05, 3.0), (0.05, None))   # a rule set without an unbounded tail keeps its last tick
+    # SPY above $3 ladders in pennies: bid 4.75 / ask 4.77 → mid 4.76 first, then the ask; an unknown penny-program class
+    # at the same quote cannot sit on 4.76 (grid 0.05) and starts at the ask
+    assert ladder_prices("buy", 4.75, 4.77, steps=3, symbol=".SPY261009C770") == [4.76, 4.77]
+    assert ladder_prices("sell", 4.75, 4.77, steps=3, symbol="SPY   261009C00770000") == [4.76, 4.75]
+    assert ladder_prices("buy", 4.75, 4.77, steps=3, symbol=".NVDA261016C177.5") == [4.77]
+    assert ladder_prices("buy", 4.75, 4.77, steps=3) == [4.77]
+
+
+@pytest.mark.asyncio
+async def test_ladder_uses_the_class_grid_and_carries_broker_warnings(tmp_path: Path):
+    clock = FakeClock(at(10, 0))
+    b = FakeBroker(mode="never")
+    b.now_fn = clock.now
+    b.warnings = ["tif.next_valid_session: Your order will begin working during next valid session."]
+    occ = "SPY   261009C00770000"
+    b.quotes[occ] = (4.75, 4.77)
+    om = OrderManager(b, Store(tmp_path / "saa.sqlite"), clock, LadderPolicy(), run_id="r", trade_date=D)
+    task = asyncio.create_task(om.work(Ticket.new("k", ".SPY261009C770", "buy", 1, 4.75, 4.77, clock.now())))
+    await _drive(clock, task, at(10, 1))
+    t = task.result()
+    assert t.status == "unfilled" and t.limit_prices == [4.76, 4.77] and t.warnings == b.warnings and t.row()["warnings"] == b.warnings
+
+
 # --------------------------------------------------------------------------------------------------------- fake broker
 @pytest.mark.asyncio
 async def test_fake_broker_fills_marketable_limits_and_tracks_positions():

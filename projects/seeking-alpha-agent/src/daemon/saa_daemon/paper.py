@@ -194,7 +194,7 @@ async def choose_entry(brokerage: Any, symbol: str, today: date, *, now_et: Any,
         if q is None:
             lines.append(f"skip {c.symbol}: no two-sided DXLink quote within the window")
             continue
-        price = ladder_prices("buy", q[0], q[1], steps=ladder.steps)[0]
+        price = ladder_prices("buy", q[0], q[1], steps=ladder.steps, symbol=c.occ)[0]
         if dry_run is not None:
             why = await dry_run(c.occ, "buy_to_open", 1, price)
             if why:
@@ -244,6 +244,17 @@ async def probe_option_quote(data_session: Any, option_symbol: str, *, window_s:
 
 
 # ------------------------------------------------------------------------------------------------------- flows
+QUEUED_WARNING = "tif.next_valid_session"      # the sandbox outside regular hours: accepted, parked for the next session, never fills now
+
+
+def queued_note(ticket: Ticket) -> str:
+    """The plain-English reason when the broker parked an order for the next session instead of working it."""
+    if any(QUEUED_WARNING in w for w in ticket.warnings) and ticket.filled_quantity < ticket.quantity:
+        return ("the sandbox queued the order for the next session (outside regular hours it accepts orders but fills nothing); "
+                "it was cancelled cleanly — fills need a trading day between 09:30 and 16:00 ET")
+    return ""
+
+
 @dataclass
 class RoundTrip:
     symbol: str
@@ -290,7 +301,7 @@ async def roundtrip(broker: Broker, store: Store, clock: Clock, option_symbol: s
     else:
         exit_.status, exit_.reason = "skipped", "entry did not fill"
     # reconcile: nothing of ours left at the broker
-    note = ""
+    note = queued_note(entry)
     try:
         pos = await broker.positions()
         live = await broker.live_orders()
@@ -298,9 +309,9 @@ async def roundtrip(broker: Broker, store: Store, clock: Clock, option_symbol: s
         ours_live = [o for o in live if o.symbol == occ]
         reconciled = not ours_pos and not ours_live
         if not reconciled:
-            note = f"left at the broker: positions {[(p.symbol.strip(), p.quantity) for p in ours_pos]}, live orders {[o.order_id for o in ours_live]}"
+            note = (note + " · " if note else "") + f"left at the broker: positions {[(p.symbol.strip(), p.quantity) for p in ours_pos]}, live orders {[o.order_id for o in ours_live]}"
     except BrokerError as e:
-        reconciled, note = False, f"reconcile failed: {e}"
+        reconciled, note = False, (note + " · " if note else "") + f"reconcile failed: {e}"
     seconds = round(clock.now().timestamp() - t0.timestamp(), 1)
     pnl = r = None
     if entry.filled_quantity and exit_.filled_quantity and entry.avg_fill_price and exit_.avg_fill_price:
@@ -347,7 +358,8 @@ async def halt_test(broker: Broker, store: Store, clock: Clock, option_symbol: s
                                  quote_fn=(lambda: quote_fn(option_symbol)) if quote_fn else None)
     out: dict[str, Any] = {"option_symbol": option_symbol, "occ": occ, "entry": entry.row()}
     if entry.filled_quantity <= 0:
-        out.update(ok=False, note=f"entry did not fill ({entry.status}: {entry.reason}); nothing to flatten")
+        q = queued_note(entry)
+        out.update(ok=False, note=f"entry did not fill ({entry.status}: {entry.reason}); nothing to flatten" + (f" — {q}" if q else ""))
         return out
     t = PaperTrade(engine_key=key, trade_date=trade_date, symbol=option_symbol, option_symbol=option_symbol, occ=occ, direction="long", option_type="call",
                    window="halttest", lane="halttest", contracts=1, account=1000.0, shadow_entry_bid=quote[0], shadow_entry_ask=quote[1], created_at=clock.now(),

@@ -54,6 +54,13 @@ class FakeAccount:
         self.next_id = 1001
         self.dry_runs: list = []
         self.untradable: set[str] = set()
+        self.rate_limit_next = 0            # how many of the next calls answer with the gateway's 429 HTML page
+
+    def _maybe_429(self):
+        from tastytrade.utils import TastytradeError
+        if self.rate_limit_next > 0:
+            self.rate_limit_next -= 1
+            raise TastytradeError("Couldn't parse response: <html>\r\n<head><title>429 Too Many Requests</title></head>\r\n<body>\r\n<center><h1>429 Too Many Requests</h1></center>")
 
     def _resp(self, doc: dict, fees: str = "0.0"):
         from tastytrade.order import PlacedOrderResponse
@@ -69,6 +76,7 @@ class FakeAccount:
 
     async def place_order(self, session, order, dry_run=True):
         from tastytrade.utils import TastytradeError
+        self._maybe_429()
         if self.fail:
             raise TastytradeError("Error: 422 — order rejected by risk")
         body = json.loads(order.model_dump_json(exclude_none=True, by_alias=True))
@@ -121,6 +129,7 @@ class FakeAccount:
         return [CurrentPosition(**doc)]
 
     async def get_balances(self, session):
+        self._maybe_429()
         from tastytrade.account import AccountBalance
         doc = {"account-number": "5WX09103", "cash-balance": "886.0", "long-equity-value": "0", "short-equity-value": "0", "long-derivative-value": "112",
                "short-derivative-value": "0", "long-futures-value": "0", "short-futures-value": "0", "long-futures-derivative-value": "0",
@@ -154,6 +163,7 @@ async def test_sdk_order_round_trip_and_mapping():
     assert sent["legs"] == [{"instrument-type": "Equity Option", "symbol": OCC, "action": "Buy to Open", "quantity": 1}]
     assert sent["external-identifier"] == "k1|entry|093702"
     assert o.order_id == "1001" and o.status == "live" and o.price == 1.14 and o.action == "buy_to_open" and o.quantity == 1 and o.fees == 1.0
+    assert o.warnings == ["paper: sandbox order"]                       # the API's warnings ride on the order (code: message)
     # replace → a new id, filled at the new price
     o2 = await b.replace("1001", 1.16)
     assert o2.order_id == "1002" and o2.status == "filled" and o2.filled_quantity == 1 and o2.avg_fill_price == 1.16 and o2.fills[0].fill_id == "f0"
@@ -176,10 +186,25 @@ async def test_sdk_order_round_trip_and_mapping():
     assert len(pos) == 1 and pos[0].symbol == OCC and pos[0].quantity == 1 and pos[0].average_open_price == 1.12 and pos[0].mark == 1.21 and pos[0].underlying == "SPY"
     bal = await b.balances()
     assert bal.get("cash_balance") == 886.0 and bal.get("net_liquidating_value") == 998.0
+    # the gateway's 429 page is retried (1 s, 2 s) and then surfaced as a one-line BrokerError
+    import saa_daemon.execution.tastytrade_broker as ttb
+    monkey = ttb.RETRY_429_S
+    ttb.RETRY_429_S = (0.0, 0.0)
+    try:
+        acct.rate_limit_next = 1
+        assert (await b.balances()).get("cash_balance") == 886.0 and b.retries == 1
+        acct.rate_limit_next = 3
+        with pytest.raises(BrokerError) as e429:
+            await b.balances()
+        assert str(e429.value).startswith("balances: Couldn't parse response: <html> <head><title>429 Too Many Requests") and b.retries == 3
+        acct.rate_limit_next = 1
+        assert await b.dry_run(OCC, "buy_to_open", 1, 1.14) is None and b.retries == 4
+    finally:
+        ttb.RETRY_429_S = monkey
     # a dry run validates the exact order without placing it: None = accepted, else the refusal on one line (no raise)
-    n_placed = len(acct.placed)
-    assert await b.dry_run(OCC, "buy_to_open", 1, 1.14) is None and len(acct.dry_runs) == 1 and len(acct.placed) == n_placed
-    dr = json.loads(acct.dry_runs[0].model_dump_json(exclude_none=True, by_alias=True))
+    n_placed, n_dry = len(acct.placed), len(acct.dry_runs)
+    assert await b.dry_run(OCC, "buy_to_open", 1, 1.14) is None and len(acct.dry_runs) == n_dry + 1 and len(acct.placed) == n_placed
+    dr = json.loads(acct.dry_runs[-1].model_dump_json(exclude_none=True, by_alias=True))
     assert dr["price"] == "1.14" and dr["price-effect"] == "Debit" and dr["legs"][0]["symbol"] == OCC
     acct.untradable.add(OCC)
     assert await b.dry_run(OCC, "buy_to_open", 1, 1.14) == f"instrument_validation_failed: Trading of {OCC} is not supported"

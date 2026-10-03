@@ -40,15 +40,15 @@ class LadderPolicy:
     flatten_max_seconds: float = 30.0  # after a market order, how long to keep polling before declaring it stuck
 
 
-def ladder_prices(side: str, bid: float, ask: float, *, steps: int) -> list[float]:
-    """Rung prices from the mid to the far side, on the tick grid, strictly monotone, no duplicates."""
+def ladder_prices(side: str, bid: float, ask: float, *, steps: int, symbol: str | None = None) -> list[float]:
+    """Rung prices from the mid to the far side, on the class's tick grid (`symbol`), strictly monotone, no duplicates."""
     bid, ask = float(bid), float(ask)
     far = ask if side == "buy" else bid
     mid = (bid + ask) / 2.0
-    out = [round_to_tick(mid, side)]                 # the mid, rounded toward the far side
+    out = [round_to_tick(mid, side, symbol)]         # the mid, rounded toward the far side
     for i in range(1, steps + 1):
         frac = i / steps
-        out.append(round_to_tick(far, side) if i == steps else nearest_tick(mid + (far - mid) * frac))
+        out.append(round_to_tick(far, side, symbol) if i == steps else nearest_tick(mid + (far - mid) * frac, symbol))
     # clamp to the far side and drop rungs that do not move the price
     cleaned: list[float] = []
     for p in out:
@@ -84,6 +84,7 @@ class Ticket:
     cancel_reason: str = ""
     fees: float = 0.0
     fees_by_order: dict[str, float] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)   # the broker's warnings on this ticket's orders (e.g. queued for the next session)
 
     @classmethod
     def new(cls, engine_key: str, symbol: str, side: str, quantity: int, bid: float, ask: float, now: datetime, *, kind: str = "entry",
@@ -106,7 +107,7 @@ class Ticket:
                 "mark_ask": self.mark_ask, "limit_prices": list(self.limit_prices), "broker_order_ids": list(self.broker_order_ids),
                 "filled_quantity": self.filled_quantity, "avg_fill_price": self.avg_fill_price, "fills": list(self.fills), "reason": self.reason,
                 "created_at": self.created_at.isoformat(), "done_at": self.done_at.isoformat() if self.done_at else None,
-                "cancel_requested": self.cancel_requested, "fees": self.fees}
+                "cancel_requested": self.cancel_requested, "fees": self.fees, "warnings": list(self.warnings)}
 
 
 class OrderManager:
@@ -146,6 +147,9 @@ class OrderManager:
         if o.fees is not None and o.filled_quantity:
             t.fees_by_order[o.order_id] = float(o.fees)
             t.fees = round(sum(t.fees_by_order.values()), 4)
+        for w in getattr(o, "warnings", None) or []:
+            if w not in t.warnings:
+                t.warnings.append(w)
 
     def _finish(self, t: Ticket, status: str, reason: str) -> Ticket:
         t.status, t.reason, t.done_at = status, reason, self.clock.now()
@@ -167,7 +171,7 @@ class OrderManager:
             return (float(q[0]), float(q[1])) if q and q[0] and q[1] and q[1] >= q[0] else (t.mark_bid, t.mark_ask)
 
         bid, ask = quote()
-        rungs = ladder_prices(t.side, bid, ask, steps=p.steps)
+        rungs = ladder_prices(t.side, bid, ask, steps=p.steps, symbol=t.occ)
         price = rungs[0]
         try:
             o = await self.broker.place(t.occ, t.action, t.quantity, price, external_id=t.ticket_id)
@@ -202,11 +206,11 @@ class OrderManager:
                 if step < len(rungs) - 1 and t.filled_quantity == 0:
                     step += 1
                     bid, ask = quote()
-                    live_rungs = ladder_prices(t.side, bid, ask, steps=p.steps)
+                    live_rungs = ladder_prices(t.side, bid, ask, steps=p.steps, symbol=t.occ)
                     price = live_rungs[min(step, len(live_rungs) - 1)]
                     far = ask if t.side == "buy" else bid
                     if step >= len(rungs) - 1:
-                        price = round_to_tick(far, t.side)
+                        price = round_to_tick(far, t.side, t.occ)
                     rungs = live_rungs if len(live_rungs) > step else rungs
                     if price != t.limit_prices[-1]:
                         try:
@@ -252,7 +256,7 @@ class OrderManager:
         bid, ask = (float(q[0]), float(q[1])) if q and q[0] and q[1] else (t.mark_bid, t.mark_ask)
         t.kind = "flatten"
         start = self.clock.now().timestamp()
-        price: float | None = round_to_tick(bid, "sell")
+        price: float | None = round_to_tick(bid, "sell", t.occ)
         try:
             o = await self.broker.place(t.occ, t.action, t.quantity, price, external_id=t.ticket_id)
         except BrokerError as e:
@@ -276,8 +280,8 @@ class OrderManager:
             elapsed = self.clock.now().timestamp() - start
             want: float | None
             if stage == 0 and elapsed >= p.flatten_step_seconds:
-                step = max(tick_size(bid), bid * p.flatten_step_frac)
-                want, stage = round_to_tick(bid - step, "sell"), 1
+                step = max(tick_size(bid, t.occ), bid * p.flatten_step_frac)
+                want, stage = round_to_tick(bid - step, "sell", t.occ), 1
             elif stage == 1 and elapsed >= p.flatten_market_after_s:
                 want, stage = None, 2
             elif elapsed >= p.flatten_max_seconds:
