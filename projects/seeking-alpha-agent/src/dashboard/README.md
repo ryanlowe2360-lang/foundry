@@ -32,17 +32,26 @@ SAA_DASHBOARD_FIXTURE=fixtures/live-2026-10-02.json npm run dev
 Screenshots (evidence): `npm run build && node scripts/screenshot.mjs --fixture fixtures/live-2026-10-02.json --out ../../notes/screenshots --name dashboard-live`
 (uses `/opt/pw-browsers/chromium` when present, else `PW_CHROMIUM_PATH`, else Playwright's own download).
 
-## Deploy to Vercel (Ryan, ~5 minutes)
+## Deploy to Vercel (Ryan, ~5 minutes, no CLI needed)
 
-1. `npm i -g vercel` (or use the Vercel dashboard import). From `src/dashboard/`: `vercel link` → create a new project
-   named `saa-dashboard` (framework: Next.js, root = this folder).
-2. Environment variables (Production + Preview), **all server-side, no `NEXT_PUBLIC_`**:
+`vercel.json` pins the framework and an install command that skips Playwright's browser download (`npm ci` with
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`), so the Git import works as is.
+
+1. vercel.com → **Add New… → Project** → import `ryanlowe2360-lang/foundry` (authorize the Vercel GitHub app for that
+   repo if asked).
+2. **Root Directory** → `projects/seeking-alpha-agent/src/dashboard` (framework Next.js is detected). Name the project
+   `saa-dashboard`.
+3. **Environment Variables** (Production + Preview), **all server-side, no `NEXT_PUBLIC_`** — type them into the Vercel
+   form, never into a chat:
    - `SUPABASE_URL` = `https://zspbkcheounkwnpjkgrv.supabase.co`
-   - `SUPABASE_SERVICE_ROLE_KEY` = the same key the daemon uses (`sb_secret_…` or the legacy service_role JWT)
-   - `DASHBOARD_ACCESS_KEY` = a long random string (e.g. `openssl rand -hex 24`)
-3. `vercel --prod`. Open `https://<project>.vercel.app/?key=<DASHBOARD_ACCESS_KEY>` once; the cookie keeps you in for 30 days.
-4. Put the URL in `STATE.json` (`deploy_url`) via `python3 scripts/foundry.py touch seeking-alpha-agent --deploy-url …` (or tell Claude).
+   - `SUPABASE_SERVICE_ROLE_KEY` = the same key the daemon uses — copy it out of `.env` in `Desktop/Seeking Alpha Agent /`
+   - `DASHBOARD_ACCESS_KEY` = a long random string (`openssl rand -hex 24` in Terminal)
+4. **Deploy**. Open `https://<project>.vercel.app/?key=<DASHBOARD_ACCESS_KEY>` once; the cookie keeps you in for 30 days.
+   Without the key the page answers 401 — that is the lock working.
+5. Tell Claude the URL (not the key); it goes into `STATE.json` (`deploy_url`) via
+   `python3 scripts/foundry.py touch seeking-alpha-agent --deploy-url …`. Every push to `main` redeploys.
 
+CLI alternative: `npm i -g vercel`, then from `src/dashboard/`: `vercel link` → `vercel env add …` ×3 → `vercel --prod`.
 Vercel's own "Deployment Protection" can be switched on as a second lock if wanted; the access key is the first one.
 
 ## What the numbers mean (accountant's version)
