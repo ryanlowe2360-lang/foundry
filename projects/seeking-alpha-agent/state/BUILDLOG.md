@@ -2,6 +2,50 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-10-03 — session 9b (Ryan's first sandbox run failed on instrument validation — fixed test-first, v0.4.1 on the Mac)
+
+- **Ryan's evidence (Saturday, from the Mac, v0.4.0):**
+  - `./run.sh smoke` — every row PASS: sandbox …9103 (Cash, options level "Covered And Cash Secured"), `execution`
+    row 0 positions / 0 live orders / net liq 1001.0, Telegram bot configured, kill switch armed; `feed_lag` WARN (not
+    measurable outside hours) as expected.
+  - `./run.sh paper-roundtrip --n 1 --allow-delayed` — feed lag unknown (after hours), `SPY spot 769.72 →
+    .SPY261005C770 bid 2.02 / ask 2.04`, then `BrokerError on place: place: instrument_validation_failed: Trading of
+    SPY   261005C00770000 is not supported`; entry `error`, exit skipped, reconciled True, `saa.run_log paper:roundtrip
+    ok=False`. Diagnosis: the cert environment's instrument universe does not carry production's Monday expiration (D24).
+- **Did (test-first, FakeBroker before the sandbox):**
+  - `execution/broker.py`: `error_text()` (one-line API errors that keep OCC padding); `FakeBroker(untradable=…)` +
+    `dry_run()` reproducing the sandbox's `instrument_validation_failed` on `dry_run` and `place`.
+  - `execution/tastytrade_broker.py`: `dry_run(symbol, action, qty, price)` → `place_order(…, dry_run=True)`, returns
+    None or the refusal text (never raises); `_guard` errors are one line now.
+  - `broker.py`: `Brokerage.nested_chain(sym, session=…)` — the sandbox session's own chain on request.
+  - `paper.py`: `option_candidates` (intersection of both chains, nearest expiration / nearest-ATM first, diagnosis
+    lines), `choose_entry` (lookup → quote → dry run per candidate; raises with the whole diagnosis), `sandbox_lookup`
+    (`Option.get`: unknown / inactive / closing-only), `EntryPick.as_dict()`; the old production-only `pick_option` is gone.
+  - `paper_cli.py`: `entry_quote` runs the chooser with the real lookup / DXLink probe / `TastytradeBroker.dry_run`,
+    prints the diagnosis, and `paper:roundtrip` / `paper:halt_test` run_log rows carry it as `pick`.
+  - Docs: daemon README (self-tests row, 139 tests), SETUP §8 step 3 (what the new lines mean, try `--symbol QQQ`
+    when the sandbox chain is stale). Version 0.4.1.
+- **Verified:**
+  - `python3 -m pytest src/tests -q` → **139 passed** (was 135): `test_paper_cli.py` +4 — intersection skips the
+    Monday expiration the sandbox lacks and picks Wed 770 with the exact dry-run call `("dry_run", "SPY   261007C00770000",
+    "buy_to_open", 1, 2.03)`; lookup-refused / dry-run-refused / unquoted strikes are skipped with reasons and the
+    chooser falls through to the next expiration; sandbox chain unreadable / absent / no session → production fallback
+    with the stated line; a stale sandbox chain raises `no tradable option candidate … 0 live expirations of 2 listed
+    (2026-09-18 … 2026-09-25) … --symbol`; same-day expiration live at 15:59 ET, gone at 16:00. `test_execution_bridge.py`:
+    dry run validates without placing, a `TastytradeError` with a trailing newline comes back as one line, `place` raises
+    `place: instrument_validation_failed: …`. pyflakes clean on every touched file.
+  - Mac deploy over the bridge: 8 files committed, all sha256 prefixes equal on both sides (`__init__ 4f0aa6d731f9d48a`,
+    `broker a8f2032bdbb78f5e`, `execution/broker 5e744e9d5424f534`, `tastytrade_broker 87857df5eecda23c`,
+    `paper 7e563fc76c03127a`, `paper_cli 75b6547cb842833c`, `README d5a16359b5da6352`, `SETUP 63bf67f76ebc6bcb`);
+    `__version__ = "0.4.1"` on the Mac. (The bridge VM cannot run the Mac's `.venv`, so the import check is the suite here.)
+- **Not yet verified (needs Ryan):** the rerun — `./run.sh paper-roundtrip --n 1 --allow-delayed` — which now prints
+  the chain diagnosis; if the sandbox chain has no live SPY expiration in common with production, `--symbol QQQ`.
+- **Stopped at:** waiting for the rerun output. Everything else in M4's open question stands (three evidence runs on
+  Monday, Vercel deploy, options-level check).
+- **Lessons:** the sandbox's chain, not production's, is what its router validates against — any instrument the
+  self-tests send must be chosen from both and dry-run first. The SDK's error text ends in `\n` (joined `code: message`
+  pairs); collapse line breaks but never inner spaces, which are part of OCC symbols.
+
 ## 2026-10-02 — session 9 ("M4 build": paper execution + approval mode + dashboard — built and verified offline; live sandbox evidence is Ryan's)
 
 - **Ruling applied:** the order path sits behind the same real-time gate as the engine (D19) and was built test-first against a

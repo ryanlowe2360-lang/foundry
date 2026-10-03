@@ -3,6 +3,30 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D24 (2026-10-03) — The sandbox self-tests pick the instrument from the intersection of both chains and dry-run it in the sandbox first
+
+- **Context:** Ryan's first `./run.sh paper-roundtrip --n 1 --allow-delayed` (Saturday, 15-min-delayed quote) chose
+  production's nearest SPY expiration (Mon 2026-10-05, strike 770) and the sandbox refused the order with
+  `instrument_validation_failed: Trading of SPY   261005C00770000 is not supported`. Not a permissions problem (the
+  smoke test shows the account, the options level and 0 positions / 0 live orders fine): the cert environment carries its
+  own, smaller and sometimes stale instrument universe, and its order router validates against *that*, not against the
+  production chain the engine and the quotes come from.
+- **Options:** (a) hard-code a "known good" contract — rots in days; (b) retry blindly through strikes/expirations —
+  slow and opaque; (c) choose from what both environments know and ask the sandbox before placing.
+- **Chose:** (c). `paper.option_candidates` fetches the production chain (quotes, the engine's view) and the sandbox's
+  own `NestedOptionChain` (via the sandbox session), keeps live expirations present in both with strikes present in both,
+  orders nearest-expiration-first / nearest-ATM-first (3 strikes per expiration, 6 candidates), then `choose_entry` makes
+  each candidate pass: the sandbox instrument lookup (`Option.get` — unknown / inactive / closing-only → skip), a two-sided
+  production DXLink quote, and a **sandbox dry run of the exact entry order** (`TastytradeBroker.dry_run`, 1 contract
+  buy_to_open at the ladder's first rung). Every step is a printed line and lands in the `saa.run_log` row (`pick`), so a
+  refusal is a diagnosis ("sandbox chain: 0 live expirations of 12 listed …"), never a mystery. The sandbox chain being
+  unreadable falls back to the production chain and says so. The engine/executor path is untouched: this is the
+  self-tests' instrument choice only; the live engine trades what the brief + chain plan say, and in M5 the production
+  router validates against the same chain the quotes come from.
+- **Revisit if:** the sandbox proves to know none of production's live expirations for SPY on a trading day (then the
+  evidence runs use `--symbol QQQ` / `AAPL`, and the spec's "sandbox round trips" may need a different underlying than the
+  engine's), or when M5 adds the production broker (dry runs there become the pre-trade check of the real order path).
+
 ## D23 (2026-10-02) — The dashboard is server-rendered off one RPC with the service-role key; no anon access, access key in front
 
 - **Context:** `saa.*` has RLS on with no policies (service role only, D13); a browser app would need either anon policies or

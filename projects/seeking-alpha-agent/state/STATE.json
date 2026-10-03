@@ -5,7 +5,7 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-10-02T23:56:56Z",
+  "last_touched": "2026-10-03T14:43:38Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
@@ -47,12 +47,10 @@
     }
   ],
   "current_milestone": 4,
-  "next_action": "Close M4 (session 10, Mac linked): read saa.run_log rows paper:roundtrip / paper:halt_test / paper:approval_test and saa.paper_trades from Ryan's CLI runs (src/daemon/saa_daemon/paper_cli.py), re-screenshot the dashboard with that sandbox data (cd src/dashboard && npm run build && node scripts/screenshot.mjs --out ../../notes/screenshots --name dashboard-sandbox, with SUPABASE_* in .env.local or a fixture pulled via the connector), walk SPEC M4's four criteria against those rows in BUILDLOG.md, then touch --milestone 4 --milestone-status done --current-milestone 5; if a run failed, fix it in execution/ with a FakeBroker test first (pytest src/tests -q, 135 green).",
+  "next_action": "Close M4 (session 10, Mac linked): read Ryan's rerun \u2014 saa.run_log rows paper:roundtrip (detail.pick holds the chain diagnosis) / paper:halt_test / paper:approval_test and saa.paper_trades \u2014 via the Supabase connector; if the sandbox still refuses, extend paper.option_candidates/choose_entry in src/daemon/saa_daemon/paper.py with a test in src/tests/test_paper_cli.py first (pytest src/tests -q, 139 green), redeploy to the Mac with checksums; once \u22653 round trips + halt \u226410 s + a timeout = Skip row exist, re-screenshot the dashboard with that sandbox data (cd src/dashboard && npm run build && node scripts/screenshot.mjs --out ../../notes/screenshots --name dashboard-sandbox), walk SPEC M4's four criteria in BUILDLOG.md, then touch --milestone 4 --milestone-status done --current-milestone 5.",
   "blockers": [],
-  "open_questions": [
-    "M4 live evidence (Ryan, from the Mac, v0.4.0 installed): (1) confirm sandbox \u20269103 can Buy to Open long calls/puts \u2014 ./run.sh smoke shows the options level; raise it or create a margin sandbox account if 'Covered And Cash Secured' rejects; (2) ./run.sh paper-roundtrip --n 3, ./run.sh halt-test (needs \u2264 10 s), ./run.sh approval-test (tap or let it time out) \u2014 add --allow-delayed to the first two while the feed is delayed; each writes a saa.run_log paper:* row; (3) deploy src/dashboard to Vercel (README) and give Claude the URL for deploy_url."
-  ],
-  "sessions": 7,
+  "open_questions": [],
+  "sessions": 8,
   "tags": [
     "trading",
     "options",
