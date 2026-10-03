@@ -13,6 +13,13 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 
+def error_text(e: BaseException | str, limit: int = 200) -> str:
+    """An API/SDK error on one line: the SDK joins `code: message` pairs with trailing newlines. Only line breaks are
+    collapsed — spaces inside the text stay, because OCC symbols carry meaningful padding (`SPY   261005C00770000`)."""
+    text = e if isinstance(e, str) else str(e)
+    return " ".join(line.strip() for line in text.splitlines() if line.strip())[:limit]
+
+
 class BrokerError(Exception):
     """Transport / API failure. The message never contains credentials."""
 
@@ -114,18 +121,21 @@ class FakeBroker:
       * ``partial`` — half the quantity (rounded up) fills at the limit at once, the rest never.
       * ``reject`` — every placement is rejected with ``reject_reason``.
     ``fail_next`` lists method names whose next call raises :class:`BrokerError` (transport failures).
+    ``untradable`` is the set of OCC symbols this broker's instrument universe does not know: ``dry_run`` refuses them
+    and ``place`` raises — the tastytrade sandbox's ``instrument_validation_failed`` behaviour.
     """
 
     name = "fake"
 
     def __init__(self, *, mode: str = "market", reject_reason: str = "rejected by fake broker", market_fills: bool = True,
                  fail_next: list[str] | None = None, account_masked: str = "…0000", cash: float = 1000.0,
-                 quote_fn: Any = None):
+                 quote_fn: Any = None, untradable: set[str] | None = None):
         assert mode in ("market", "at_limit", "never", "partial", "reject")
         self.mode = mode
         self.reject_reason = reject_reason
         self.market_fills = market_fills
         self.fail_next = list(fail_next or [])
+        self.untradable: set[str] = set(untradable or ())
         self.account_masked = account_masked
         self.cash = cash
         self.quotes: dict[str, tuple[float, float]] = _QuoteBook(quote_fn)
@@ -208,11 +218,20 @@ class FakeBroker:
         return o
 
     # ------------------------------------------------------------------------------------------------ interface
+    async def dry_run(self, symbol: str, action: str, quantity: int, price: float | None) -> str | None:
+        """Mirror of TastytradeBroker.dry_run: None = the order would be accepted, else the refusal text."""
+        self.calls.append(("dry_run", symbol, action, quantity, price))
+        if symbol in self.untradable:
+            return f"instrument_validation_failed: Trading of {symbol} is not supported"
+        return self.reject_reason if self.mode == "reject" else None
+
     async def place(self, symbol: str, action: str, quantity: int, price: float | None, *, external_id: str | None = None) -> BrokerOrder:
         self.calls.append(("place", symbol, action, quantity, price))
         self._maybe_fail("place")
         if quantity <= 0:
             raise BrokerError("quantity must be positive")
+        if symbol in self.untradable:
+            raise BrokerError(f"place: instrument_validation_failed: Trading of {symbol} is not supported")
         return self._new(symbol, action, quantity, price, external_id)
 
     async def replace(self, order_id: str, price: float | None) -> BrokerOrder:

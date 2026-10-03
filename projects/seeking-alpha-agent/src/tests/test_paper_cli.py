@@ -190,3 +190,143 @@ async def test_halt_and_resume_commands_and_status_text(tmp_path: Path, capsys):
     assert not k.engaged and Store(tmp_path / "state" / "saa.sqlite").get_kv("halt") == "false"
     txt = paper_status_text(Store(tmp_path / "state" / "saa.sqlite"), D)
     assert txt.startswith(f"Paper book {D}: 0 trade(s)") and "kill switch: armed" in txt
+
+
+# ----------------------------------------------------------------------------------- instrument choice (sandbox-aware)
+class _Strike:
+    def __init__(self, k: float, und: str, code: str):
+        self.strike_price = k
+        self.call_streamer_symbol = f".{und}{code}C{k:g}"
+        self.put_streamer_symbol = f".{und}{code}P{k:g}"
+
+
+class _Exp:
+    def __init__(self, d: date, today: date, strikes: list[float], und: str):
+        self.expiration_date, self.days_to_expiration = d, (d - today).days
+        self.strikes = [_Strike(k, und, f"{d:%y%m%d}") for k in strikes]
+
+
+class _Nested:
+    def __init__(self, exps: list[_Exp]):
+        self.option_chain_type = "Standard"
+        self.expirations = exps
+
+
+class ChainBrokerage:
+    """Production chain vs the sandbox's own chain (None = the sandbox lists nothing; `fail_sandbox` = the lookup raises)."""
+
+    def __init__(self, prod: dict[date, list[float]], sand: dict[date, list[float]] | None, *, spot: float = 769.72,
+                 today: date, fail_sandbox: bool = False, sandbox: bool = True):
+        self.data, self.broker = object(), (object() if sandbox else None)
+        self.prod, self.sand, self.spot, self.today, self.fail_sandbox = prod, sand, spot, today, fail_sandbox
+        self.chain_calls: list[str] = []
+
+    async def spot_prices(self, symbols):
+        return {s: self.spot for s in symbols}
+
+    async def nested_chain(self, underlying: str, *, session=None):
+        self.chain_calls.append("prod" if session is None else "sandbox")
+        if session is None:
+            return _Nested([_Exp(d, self.today, ks, underlying) for d, ks in self.prod.items()])
+        if self.fail_sandbox:
+            raise RuntimeError("404: Couldn't parse response")
+        return None if self.sand is None else _Nested([_Exp(d, self.today, ks, underlying) for d, ks in self.sand.items()])
+
+
+MON, WED, FRI = date(2026, 10, 5), date(2026, 10, 7), date(2026, 10, 9)
+T = date(2026, 10, 3)                                              # a Saturday: everything listed is in the future
+FINE = [float(k) for k in range(760, 781)]                         # production: $1 strikes
+COARSE = [760.0, 765.0, 770.0, 775.0, 780.0]                       # sandbox: $5 strikes
+
+
+async def _probe(sym: str):
+    return (2.02, 2.04)
+
+
+@pytest.mark.asyncio
+async def test_choose_entry_intersects_the_sandbox_chain():
+    from saa_daemon.paper import choose_entry
+    brk = ChainBrokerage({MON: FINE, WED: FINE, FRI: FINE}, {WED: COARSE, FRI: COARSE}, today=T)
+    fake = FakeBroker(mode="at_limit")
+    seen: list[str] = []
+
+    async def lookup(occ: str):
+        seen.append(occ)
+        return None
+
+    pick = await choose_entry(brk, "SPY", T, now_et=time(11, 0), probe=_probe, lookup=lookup, dry_run=fake.dry_run)
+    # the Monday expiration production lists but the sandbox does not is never a candidate; 770 is the nearest common strike
+    assert pick.symbol == ".SPY261007C770" and pick.occ == "SPY   261007C00770000" and pick.expiration == WED and pick.strike == 770.0
+    assert pick.quote == (2.02, 2.04) and pick.spot == 769.72 and seen == [pick.occ]
+    assert fake.calls == [("dry_run", pick.occ, "buy_to_open", 1, 2.03)]          # the exact entry order, ladder rung 0
+    assert brk.chain_calls == ["prod", "sandbox"]
+    text = "\n".join(pick.lines)
+    assert "production chain: 3 live expirations (2026-10-05 … 2026-10-09)" in text
+    assert "sandbox chain: 2 live expirations of 2 listed (2026-10-07 … 2026-10-09)" in text
+    assert "common live expirations: 2 (first 2026-10-07)" in text and "chosen .SPY261007C770 = SPY   261007C00770000" in text
+    assert "sandbox dry run accepted 1 @ 2.03" in text
+    d = pick.as_dict()
+    assert d["expiration"] == "2026-10-07" and d["quote"] == [2.02, 2.04] and d["lines"] == pick.lines
+
+
+@pytest.mark.asyncio
+async def test_choose_entry_skips_what_the_sandbox_refuses():
+    from saa_daemon.paper import choose_entry
+    brk = ChainBrokerage({MON: FINE, WED: FINE}, {MON: FINE, WED: FINE}, today=T)
+    fake = FakeBroker(mode="at_limit", untradable={"SPY   261005C00769000"})   # the dry run refuses Monday's 769
+
+    async def lookup(occ: str):
+        return "closing-only in the sandbox" if occ == "SPY   261005C00770000" else None
+
+    quotes = {".SPY261005C771": None}                                           # Monday's 771 has no two-sided quote
+
+    async def probe(sym: str):
+        return quotes.get(sym, (2.02, 2.04))
+
+    pick = await choose_entry(brk, "SPY", T, now_et=time(11, 0), probe=probe, lookup=lookup, dry_run=fake.dry_run)
+    # nearest-ATM order at spot 769.72 on Monday: 770 (lookup refuses), 769 (dry run refuses), 771 (no quote) — three
+    # strikes per expiration, then the next expiration: Wednesday's 770 passes
+    assert pick.symbol == ".SPY261007C770" and pick.expiration == WED and pick.strike == 770.0
+    text = "\n".join(pick.lines)
+    assert "skip .SPY261005C770: closing-only in the sandbox" in text
+    assert "skip .SPY261005C769: sandbox dry run refused: instrument_validation_failed: Trading of SPY   261005C00769000 is not supported" in text
+    assert "skip .SPY261005C771: no two-sided DXLink quote within the window" in text
+    assert [c[1] for c in fake.calls] == ["SPY   261005C00769000", "SPY   261007C00770000"]
+
+
+@pytest.mark.asyncio
+async def test_choose_entry_falls_back_when_the_sandbox_chain_is_unreadable():
+    from saa_daemon.paper import choose_entry
+    brk = ChainBrokerage({MON: FINE, WED: FINE}, None, today=T, fail_sandbox=True)
+    pick = await choose_entry(brk, "SPY", T, now_et=time(11, 0), probe=_probe)
+    assert pick.symbol == ".SPY261005C770" and pick.expiration == MON
+    assert any(l.startswith("sandbox chain lookup failed (RuntimeError: 404") and l.endswith("falling back to the production chain") for l in pick.lines)
+    brk2 = ChainBrokerage({MON: FINE}, None, today=T)                           # the sandbox lists no chain at all
+    pick2 = await choose_entry(brk2, "SPY", T, now_et=time(11, 0), probe=_probe)
+    assert pick2.symbol == ".SPY261005C770" and any("lists no option chain for SPY" in l for l in pick2.lines)
+    brk3 = ChainBrokerage({MON: FINE}, None, today=T, sandbox=False)            # no sandbox session at all
+    pick3 = await choose_entry(brk3, "SPY", T, now_et=time(11, 0), probe=_probe)
+    assert pick3.symbol == ".SPY261005C770" and "no sandbox session — candidates from the production chain only" in pick3.lines
+
+
+@pytest.mark.asyncio
+async def test_choose_entry_reports_a_stale_sandbox_chain_and_gives_up_cleanly():
+    from saa_daemon.paper import choose_entry, option_candidates
+    stale = {date(2026, 9, 18): COARSE, date(2026, 9, 25): COARSE}             # the sandbox only knows expired contracts
+    brk = ChainBrokerage({MON: FINE, WED: FINE}, stale, today=T)
+    with pytest.raises(RuntimeError) as ei:
+        await option_candidates(brk, "SPY", T, now_et=time(11, 0))
+    msg = str(ei.value)
+    assert msg.startswith("no tradable option candidate for SPY:")
+    assert "sandbox chain: 0 live expirations of 2 listed (2026-09-18 … 2026-09-25)" in msg
+    assert "common live expirations: 0 — the sandbox knows none of production's live expirations/strikes" in msg and "--symbol" in msg
+    # every candidate refused → the error carries the whole diagnosis
+    brk2 = ChainBrokerage({MON: FINE}, {MON: FINE}, today=T)
+    fake = FakeBroker(mode="reject", reject_reason="instrument_validation_failed: nope")
+    with pytest.raises(RuntimeError) as ei2:
+        await choose_entry(brk2, "SPY", T, now_et=time(11, 0), probe=_probe, dry_run=fake.dry_run, limit=3)
+    assert str(ei2.value).count("sandbox dry run refused: instrument_validation_failed: nope") == 3 and len(fake.calls) == 3
+    # a same-day expiration is live before the close and gone after it
+    brk3 = ChainBrokerage({T: FINE, MON: FINE}, {T: FINE, MON: FINE}, today=T)
+    assert (await choose_entry(brk3, "SPY", T, now_et=time(15, 59), probe=_probe)).expiration == T
+    assert (await choose_entry(brk3, "SPY", T, now_et=time(16, 0), probe=_probe)).expiration == MON

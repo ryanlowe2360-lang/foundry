@@ -1,4 +1,4 @@
-# Seeking Alpha Agent — daemon (M2 data plane + M3 rules engine + M4 paper execution) v0.4.0
+# Seeking Alpha Agent — daemon (M2 data plane + M3 rules engine + M4 paper execution) v0.4.1
 
 The long-running process that places the trades. M2 proved the data plane (broker logins, DXLink stream, 1-minute bars,
 5-minute chain snapshots with an OI dealer-gamma proxy, halts, VIX term, SQLite + Supabase mirror, Telegram heartbeat /
@@ -109,7 +109,7 @@ nothing on a delayed feed). Fast-lane hypotheses never trade.
 | Approvals | `approvals.py`, `telegram_bot.py` | `Proposed ▸ SPY long call .SPY… ×1 @ ask 1.16 (mid 1.14) · R $116 (floor) · open · 6/6 gates · p=0.32 · stop 10:00` with ✅ Approve / ⏭ Skip; a tap resolves it (the message is edited with who / when / latency), **no answer in 3:00 = Skip (status `timeout`)**, closed-by-the-engine-first = `expired`. Commands: `/halt`, `/resume`, `/status`, `/positions`, `/help`, `/id`. Only the owner's chat is honoured. Offsets are shared with the `telegram-send` edge function through `saa.settings.telegram_update_offset`; the function skips `getUpdates` while `daemon_last_seen` is < 3 min old. |
 | Executor | `executor.py` | engine open → (kill switch? feed real-time? Tier 1 caps at the live ask: ≤ 2 contracts per $1k, ≤ 50 % of the account?) → proposal → ladder → `open`; close / bank → exit ladder (escalates to flatten); `halt()` expires proposals, cancels working orders, flattens every open position **and any sandbox position the book does not know**, reports the seconds to flat; `reconcile()` every 30 s compares broker positions + live orders with the book (`saa.reconciliations`, mismatches alerted once). Realized R = (proceeds − cost − fees) ÷ cost; slippage vs the engine's ask / bid is recorded per trade. |
 | Kill switch | `killswitch.py` | the `state/HALT` file (survives restarts) + `saa.settings.halt` (the M1 `/halt` path) kept in step; `./run.sh halt` / `/halt` engage, `./run.sh resume` / `/resume` clear. A halted session starts halted and says so in the heartbeat. |
-| Self-tests | `paper.py`, `paper_cli.py` | `paper-roundtrip`, `halt-test`, `approval-test` — the M4 acceptance evidence, run from the Mac against the real sandbox; the flows are tested offline. |
+| Self-tests | `paper.py`, `paper_cli.py` | `paper-roundtrip`, `halt-test`, `approval-test` — the M4 acceptance evidence, run from the Mac against the real sandbox; the flows are tested offline. The instrument is chosen from the **intersection of the production chain and the sandbox's own chain** (the cert environment has a smaller, sometimes stale universe and its router validates against that — 2026-10-03 it refused production's nearest SPY expiration with `instrument_validation_failed`), nearest live expiration first, nearest-ATM first, and each candidate must pass the sandbox instrument lookup (not closing-only), a two-sided DXLink quote and a **sandbox dry run of the exact entry order** before anything is placed; the diagnosis is printed and logged with the run. |
 
 Mode is `approval` and cannot be set to `auto` until M6 (`ALLOW_AUTO_MODE` in `executor.py`). Exits never need approval.
 
@@ -141,7 +141,7 @@ calls +, puts −), `flip`, `call_wall`, `put_wall`, `regime`, `coverage`. The e
 
 ## Tests
 
-From `projects/seeking-alpha-agent`: `python3 -m pytest src/tests -q` (135 tests; needs `pip install -r src/daemon/requirements-dev.txt`
+From `projects/seeking-alpha-agent`: `python3 -m pytest src/tests -q` (139 tests; needs `pip install -r src/daemon/requirements-dev.txt`
 — pytest, pytest-asyncio, hypothesis). M4: `test_execution_orders.py` (symbols, ticks, the ladder on the FakeBroker: fills at mid,
 steps to the ask, re-reads the quote, gives up and cancels, partial, rejected, transport error, outside cancel, the flatten ladder
 reaching market inside 10 s), `test_execution_executor.py` (approve → entry → engine close → exit with realized R and slippage;

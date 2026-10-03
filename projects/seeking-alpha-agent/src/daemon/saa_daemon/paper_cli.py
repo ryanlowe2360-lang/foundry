@@ -14,7 +14,7 @@ from .config import Settings
 from .execution import KillSwitch, LadderPolicy
 from .execution.telegram_bot import TelegramBot
 from .mirror import MirrorError, SupabaseMirror
-from .paper import approval_test, halt_test, measure_feed_lag, paper_status_text, pick_option, probe_option_quote, roundtrip
+from .paper import EntryPick, approval_test, choose_entry, halt_test, measure_feed_lag, paper_status_text, probe_option_quote, roundtrip, sandbox_lookup
 from .store import Store
 
 log = logging.getLogger("saa.paper")
@@ -70,8 +70,9 @@ class _Ctx:
             print(f"run_log write failed ({e}); queued for the next session")
             self.mirror.queue("saa_log_run", {"p_job": job, "p_ok": ok, "p_detail": detail}, self.clock.now())
 
-    async def entry_quote(self, symbol: str, allow_delayed: bool) -> tuple[str, tuple[float, float], Any]:
-        """Feed gate + option pick + quote probe. Raises when the feed is not real-time and --allow-delayed is absent."""
+    async def entry_quote(self, symbol: str, allow_delayed: bool) -> tuple[EntryPick, Any]:
+        """Feed gate, then the validated instrument choice (both chains → sandbox lookup → DXLink quote → sandbox dry
+        run). Raises when the feed is not real-time and --allow-delayed is absent, or when no candidate passes."""
         feed = await measure_feed_lag(self.brokerage.data, [symbol], session_open=self.sched.open)
         print(f"feed lag: {feed.mode} ({feed.note})")
         if feed.mode != "realtime":
@@ -79,17 +80,24 @@ class _Ctx:
                 raise RuntimeError("the production feed is not measurably real-time (D19) — re-run with --allow-delayed to test the sandbox "
                                    "plumbing on a delayed/after-hours quote (fills are sandbox fills; the quote is not a decision)")
             print("⚠ --allow-delayed: sandbox plumbing test on a non-real-time quote; recorded as such")
-        option_symbol, spot = await pick_option(self.brokerage, symbol, self.today, settings=self.settings)
-        quote = await probe_option_quote(self.brokerage.data, option_symbol)
-        if quote is None:
-            raise RuntimeError(f"no two-sided DXLink quote for {option_symbol} within 6 s")
-        print(f"{symbol} spot {spot:.2f} → {option_symbol} bid {quote[0]:.2f} / ask {quote[1]:.2f}")
-        return option_symbol, quote, feed
+        print(f"choosing an option on {symbol} the sandbox trades:")
+        try:
+            pick = await choose_entry(self.brokerage, symbol, self.today, now_et=et(self.clock.now()).time(),
+                                      probe=lambda sym: probe_option_quote(self.brokerage.data, sym),
+                                      lookup=sandbox_lookup(self.brokerage.broker), dry_run=self.broker.dry_run)
+        except RuntimeError as e:
+            print(f"  {e}")
+            raise RuntimeError("no option the sandbox trades could be found — see the diagnosis above") from None
+        for line in pick.lines:
+            print(f"  {line}")
+        print(f"{symbol} spot {pick.spot:.2f} → {pick.symbol} bid {pick.quote[0]:.2f} / ask {pick.quote[1]:.2f}")
+        return pick, feed
 
 
 async def run_roundtrip(settings: Settings, *, symbol: str, n: int, allow_delayed: bool) -> int:
     async with _Ctx(settings) as c:
-        option_symbol, quote, feed = await c.entry_quote(symbol, allow_delayed)
+        pick, feed = await c.entry_quote(symbol, allow_delayed)
+        option_symbol, quote = pick.symbol, pick.quote
         run_id = f"paper-roundtrip-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
         results = []
         for i in range(max(1, n)):
@@ -104,7 +112,7 @@ async def run_roundtrip(settings: Settings, *, symbol: str, n: int, allow_delaye
             if not rt.ok:
                 break
         ok = all(r["ok"] for r in results) and len(results) == max(1, n)
-        await c.log_run("paper:roundtrip", ok, {"run_id": run_id, "symbol": symbol, "option_symbol": option_symbol, "quote": quote,
+        await c.log_run("paper:roundtrip", ok, {"run_id": run_id, "symbol": symbol, "option_symbol": option_symbol, "quote": quote, "pick": pick.as_dict(),
                                                 "feed": {"mode": feed.mode, "lag_s": feed.lag_s, "note": feed.note}, "allow_delayed": allow_delayed,
                                                 "account": c.broker.account_masked, "round_trips": results, "n_ok": sum(1 for r in results if r["ok"])})
         print("RESULT:", "ALL ROUND TRIPS FILLED AND RECONCILED" if ok else "NOT OK — see above")
@@ -113,7 +121,8 @@ async def run_roundtrip(settings: Settings, *, symbol: str, n: int, allow_delaye
 
 async def run_halt_test(settings: Settings, *, symbol: str, allow_delayed: bool) -> int:
     async with _Ctx(settings) as c:
-        option_symbol, quote, feed = await c.entry_quote(symbol, allow_delayed)
+        pick, feed = await c.entry_quote(symbol, allow_delayed)
+        option_symbol, quote = pick.symbol, pick.quote
         run_id = f"paper-halt-test-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
         out = await halt_test(c.broker, c.store, c.clock, option_symbol, quote, run_id=run_id, trade_date=c.today, state_dir=settings.state_dir)
         e = out["entry"]
@@ -128,7 +137,7 @@ async def run_halt_test(settings: Settings, *, symbol: str, allow_delayed: bool)
             await c.mirror.flush_paper_trades()
         except MirrorError as ex:
             print(f"mirror flush failed: {ex}")
-        await c.log_run("paper:halt_test", bool(out.get("ok")), {"run_id": run_id, "symbol": symbol, "option_symbol": option_symbol, "quote": quote,
+        await c.log_run("paper:halt_test", bool(out.get("ok")), {"run_id": run_id, "symbol": symbol, "option_symbol": option_symbol, "quote": quote, "pick": pick.as_dict(),
                                                                  "feed": {"mode": feed.mode, "lag_s": feed.lag_s}, "allow_delayed": allow_delayed,
                                                                  "account": c.broker.account_masked, **{k: v for k, v in out.items() if k != "trade"}})
         print("RESULT:", "FLAT WITHIN 10 S" if out.get("ok") else "NOT OK — see above")

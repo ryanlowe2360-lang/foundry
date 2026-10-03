@@ -164,7 +164,7 @@ marked at real DXLink bids** — still no orders. What you will notice:
 Sizing is at the one-contract floor until the ledger has trades (the posterior starts shrunk to breakeven — plan §3),
 and the 10-day M1 record streak remains the gate before any sizing above the floor is trusted.
 
-## 8. M4 — paper execution in the sandbox (v0.4.0): what changes for you
+## 8. M4 — paper execution in the sandbox (v0.4.1): what changes for you
 
 Same `./run.sh session`; the daemon now **proposes** every gate-fired entry on Telegram and places it in the sandbox
 account only after you tap **✅ Approve** (⏭ Skip or no answer within 3 minutes = Skip, logged). Exits need no tap.
@@ -185,6 +185,10 @@ exactly like the engine.
    ```
    Outside regular hours (or while the feed is delayed) add `--allow-delayed` to the first two: the sandbox fills either
    way, but the quote is then stale and the row says so. Run them on a real-time feed once that exists.
+   The first two print how the option was chosen (`production chain … / sandbox chain … / common live expirations … /
+   chosen …`): the sandbox trades a smaller, sometimes stale set of contracts than production, so the test picks the
+   nearest expiration and strike both know and dry-runs the order there first. If it ends with "no option the sandbox
+   trades could be found", read those lines — usually the sandbox chain is stale — and try `--symbol QQQ` or `--symbol AAPL`.
 
 **Day to day:**
 

@@ -231,11 +231,13 @@ class Brokerage:
             log.error("no spot price for %s after all methods", " ".join(still))
         return out
 
-    async def nested_chain(self, underlying: str) -> Any:
-        """NestedOptionChain for the standard root (skips non-standard roots such as SPXW-style adjusted chains)."""
+    async def nested_chain(self, underlying: str, *, session: Any = None) -> Any:
+        """NestedOptionChain for the standard root (skips non-standard roots such as SPXW-style adjusted chains).
+        Asks the production data session by default; pass ``session=self.broker`` for the sandbox's own (smaller,
+        sometimes stale) instrument universe — that is what its order router validates against."""
         from tastytrade.instruments import NestedOptionChain
 
-        chains = await NestedOptionChain.get(self.data, underlying)
+        chains = await NestedOptionChain.get(session if session is not None else self.data, underlying)
         if not chains:
             return None
         std = [c for c in chains if c.option_chain_type.lower().startswith("standard")]

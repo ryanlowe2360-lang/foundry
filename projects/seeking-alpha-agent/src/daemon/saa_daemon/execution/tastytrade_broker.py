@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from .broker import BrokerError, BrokerFill, BrokerOrder, BrokerPosition
+from .broker import BrokerError, BrokerFill, BrokerOrder, BrokerPosition, error_text
 
 log = logging.getLogger("saa.tt_broker")
 
@@ -36,6 +36,10 @@ def _f(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _msg(e: BaseException) -> str:
+    return error_text(e)
 
 
 class TastytradeBroker:
@@ -112,13 +116,29 @@ class TastytradeBroker:
         try:
             return await coro
         except TastytradeError as e:
-            self.last_error = f"{what}: {str(e)[:200]}"
+            self.last_error = f"{what}: {_msg(e)}"
             raise BrokerError(self.last_error) from e
         except BrokerError:
             raise
         except Exception as e:  # noqa: BLE001
-            self.last_error = f"{what}: {type(e).__name__}: {str(e)[:200]}"
+            self.last_error = f"{what}: {type(e).__name__}: {_msg(e)}"
             raise BrokerError(self.last_error) from e
+
+    async def dry_run(self, symbol: str, action: str, quantity: int, price: float | None) -> str | None:
+        """Ask the sandbox to validate (not place) an order: None when it would be accepted, else the refusal text.
+        The paper self-tests use it to settle on an instrument the sandbox actually trades before any real placement."""
+        from tastytrade.utils import TastytradeError
+
+        self.calls += 1
+        try:
+            order = self._order(self._leg(symbol, action, quantity), action, price)
+            resp = await self.account.place_order(self.session, order, dry_run=True)
+        except (TastytradeError, BrokerError) as e:
+            return _msg(e)
+        except Exception as e:  # noqa: BLE001
+            return f"{type(e).__name__}: {_msg(e)}"
+        errors = list(getattr(resp, "errors", None) or [])
+        return "; ".join(str(e) for e in errors)[:300] if errors else None
 
     # ---------------------------------------------------------------------------------------------- interface
     async def place(self, symbol: str, action: str, quantity: int, price: float | None, *, external_id: str | None = None) -> BrokerOrder:

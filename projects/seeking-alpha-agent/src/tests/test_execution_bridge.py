@@ -52,6 +52,8 @@ class FakeAccount:
         self.orders: dict[int, dict] = {}
         self.fail = False
         self.next_id = 1001
+        self.dry_runs: list = []
+        self.untradable: set[str] = set()
 
     def _resp(self, doc: dict, fees: str = "0.0"):
         from tastytrade.order import PlacedOrderResponse
@@ -69,6 +71,13 @@ class FakeAccount:
         from tastytrade.utils import TastytradeError
         if self.fail:
             raise TastytradeError("Error: 422 — order rejected by risk")
+        body = json.loads(order.model_dump_json(exclude_none=True, by_alias=True))
+        if body["legs"][0]["symbol"] in self.untradable:          # what the cert environment says for an instrument it does not know
+            raise TastytradeError(f"instrument_validation_failed: Trading of {body['legs'][0]['symbol']} is not supported\n")
+        if dry_run:
+            self.dry_runs.append(order)
+            return self._resp(_placed(0, "Received", qty=int(body["legs"][0]["quantity"]), price=body.get("price", "0"), action=body["legs"][0]["action"],
+                                      order_type=body["order-type"]), fees="1.00")
         self.placed.append(order)
         oid = self.next_id
         self.next_id += 1
@@ -167,8 +176,21 @@ async def test_sdk_order_round_trip_and_mapping():
     assert len(pos) == 1 and pos[0].symbol == OCC and pos[0].quantity == 1 and pos[0].average_open_price == 1.12 and pos[0].mark == 1.21 and pos[0].underlying == "SPY"
     bal = await b.balances()
     assert bal.get("cash_balance") == 886.0 and bal.get("net_liquidating_value") == 998.0
+    # a dry run validates the exact order without placing it: None = accepted, else the refusal on one line (no raise)
+    n_placed = len(acct.placed)
+    assert await b.dry_run(OCC, "buy_to_open", 1, 1.14) is None and len(acct.dry_runs) == 1 and len(acct.placed) == n_placed
+    dr = json.loads(acct.dry_runs[0].model_dump_json(exclude_none=True, by_alias=True))
+    assert dr["price"] == "1.14" and dr["price-effect"] == "Debit" and dr["legs"][0]["symbol"] == OCC
+    acct.untradable.add(OCC)
+    assert await b.dry_run(OCC, "buy_to_open", 1, 1.14) == f"instrument_validation_failed: Trading of {OCC} is not supported"
+    with pytest.raises(BrokerError) as ei:
+        await b.place(OCC, "buy_to_open", 1, 1.14)
+    assert str(ei.value) == f"place: instrument_validation_failed: Trading of {OCC} is not supported" and "\n" not in str(ei.value)
+    acct.untradable.clear()
+    assert await b.dry_run(OCC, "sell_to_open", 1, 1.14) == "action 'sell_to_open' is not allowed (long premium only: buy_to_open / sell_to_close)"
     # the SDK's error becomes a BrokerError; the sell-to-open action is refused before any call
     acct.fail = True
+    assert await b.dry_run(OCC, "buy_to_open", 1, 1.14) == "Error: 422 — order rejected by risk"
     with pytest.raises(BrokerError, match="422"):
         await b.place(OCC, "buy_to_open", 1, 1.14)
     with pytest.raises(BrokerError, match="long premium only"):

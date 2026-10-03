@@ -22,9 +22,8 @@ from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from .clock import Clock, et
-from .config import Settings
 from .execution import ApprovalGate, ExecutionPolicy, Executor, KillSwitch, LadderPolicy, OrderManager, PaperTrade, Ticket
-from .execution.broker import Broker, BrokerError
+from .execution.broker import Broker, BrokerError, error_text
 from .execution.symbols import streamer_to_occ
 from .mirror import MirrorError, SupabaseMirror
 from .store import Store
@@ -71,9 +70,67 @@ async def measure_feed_lag(data_session: Any, symbols: list[str], *, window_s: f
     return FeedCheck("realtime" if med < 30 else "DELAYED", med, f"{len(samples)} trades, median {med}s")
 
 
-async def pick_option(brokerage: Any, symbol: str, today: date, *, settings: Settings) -> tuple[str, float]:
-    """Nearest-ATM call on the first live expiration of `symbol` → (streamer symbol, spot)."""
-    from .chains import from_sdk_nested, plan_chain
+# ------------------------------------------------------------------------------------------- instrument choice
+# The sandbox (cert) environment has its own, smaller and sometimes stale instrument universe; its order router
+# validates against *that*, not against production's chain (2026-10-03: production's nearest SPY expiration was
+# refused with `instrument_validation_failed: Trading of SPY 261005C00770000 is not supported`). So the self-tests
+# choose from the intersection of both chains, nearest live expiration first and nearest-ATM first, and make each
+# candidate pass three checks before anything is placed: the sandbox knows the instrument and it is not
+# closing-only (`lookup`), production DXLink quotes it two-sided (`probe`), and the sandbox accepts the exact entry
+# order in a dry run (`dry_run`). Every step is printed, so a refusal is a diagnosis rather than a mystery.
+
+Lookup = Callable[[str], Awaitable[str | None]]              # OCC → None if tradable in the sandbox, else why not
+DryRun = Callable[[str, str, int, float | None], Awaitable[str | None]]   # (OCC, action, qty, price) → None if accepted
+
+
+@dataclass
+class Candidate:
+    symbol: str          # production streamer symbol (what DXLink quotes)
+    occ: str             # what the sandbox trades
+    expiration: date
+    strike: float
+
+
+@dataclass
+class EntryPick:
+    symbol: str
+    occ: str
+    spot: float
+    expiration: date
+    strike: float
+    quote: tuple[float, float]
+    lines: list[str]     # the diagnosis, one line per step — printed by the CLI and logged as evidence
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"symbol": self.symbol, "occ": self.occ, "spot": self.spot, "expiration": self.expiration.isoformat(),
+                "strike": self.strike, "quote": list(self.quote), "lines": list(self.lines)}
+
+
+def _chain_map(expirations: Any, *, today: date, now_et: Any) -> dict[date, dict[float, str]]:
+    """Live expirations (a same-day one only before the 16:00 ET close) → {strike: call streamer symbol}."""
+    from datetime import time as _time
+
+    out: dict[date, dict[float, str]] = {}
+    for e in expirations:
+        if e.expiration_date < today or (e.expiration_date == today and now_et >= _time(16, 0)):
+            continue
+        strikes = {float(k): call for k, call, _put in e.strikes if call}
+        if strikes:
+            out[e.expiration_date] = strikes
+    return out
+
+
+def _span(exps: list[date]) -> str:
+    return f"{min(exps):%Y-%m-%d} … {max(exps):%Y-%m-%d}" if exps else "none"
+
+
+async def option_candidates(brokerage: Any, symbol: str, today: date, *, now_et: Any, limit: int = 6,
+                            per_expiration: int = 3) -> tuple[float, list[Candidate], list[str]]:
+    """(spot, candidates nearest-expiration-first then nearest-ATM-first, diagnosis lines).
+
+    Candidates come from the production chain restricted to expirations and strikes the sandbox chain also lists;
+    when the sandbox chain cannot be read the production chain alone is used and the diagnosis says so."""
+    from .chains import from_sdk_nested
 
     spots = await brokerage.spot_prices([symbol])
     spot = spots.get(symbol)
@@ -81,15 +138,89 @@ async def pick_option(brokerage: Any, symbol: str, today: date, *, settings: Set
         raise RuntimeError(f"no spot price for {symbol}")
     nested = await brokerage.nested_chain(symbol)
     if nested is None:
-        raise RuntimeError(f"no option chain for {symbol}")
-    plan = plan_chain(symbol, from_sdk_nested(nested), spot, today=today, now_et=et(datetime.now(timezone.utc)).time(), n_exp=2,
-                      window_pct=settings.strike_window_pct_index, max_per_side=settings.max_strikes_per_side)
-    live = [e for e in plan.expirations if e.expiration >= today and e.strikes]
-    if not live:
-        raise RuntimeError(f"no live expiration for {symbol}")
-    e = live[0] if live[0].expiration > today or len(live) == 1 else live[0]
-    sp = min(e.strikes, key=lambda s: (abs(s.strike - spot), s.strike))
-    return sp.call, float(spot)
+        raise RuntimeError(f"no production option chain for {symbol}")
+    prod = _chain_map(from_sdk_nested(nested), today=today, now_et=now_et)
+    lines = [f"production chain: {len(prod)} live expirations ({_span(list(prod))})"]
+    sand: dict[date, dict[float, str]] | None = None
+    sandbox_session = getattr(brokerage, "broker", None)
+    if sandbox_session is None:
+        lines.append("no sandbox session — candidates from the production chain only")
+    else:
+        try:
+            sn = await brokerage.nested_chain(symbol, session=sandbox_session)
+        except Exception as e:  # noqa: BLE001
+            sn = None
+            lines.append(f"sandbox chain lookup failed ({type(e).__name__}: {error_text(e, 120)}) — falling back to the production chain")
+        else:
+            if sn is None:
+                lines.append(f"sandbox chain: the sandbox lists no option chain for {symbol} — falling back to the production chain")
+        if sn is not None:
+            raw = from_sdk_nested(sn)
+            sand = _chain_map(raw, today=today, now_et=now_et)
+            listed = [e.expiration_date for e in raw]
+            lines.append(f"sandbox chain: {len(sand)} live expirations of {len(listed)} listed ({_span(listed)})")
+            common = [d for d in sorted(prod) if d in sand and set(prod[d]) & set(sand[d])]
+            lines.append(f"common live expirations: {len(common)}" + (f" (first {common[0]:%Y-%m-%d})" if common
+                         else " — the sandbox knows none of production's live expirations/strikes"))
+    cands: list[Candidate] = []
+    for exp in sorted(prod):
+        strikes = prod[exp]
+        if sand is not None:
+            strikes = {k: v for k, v in strikes.items() if k in sand.get(exp, {})}
+        for k in sorted(strikes, key=lambda k: (abs(k - spot), k))[:per_expiration]:
+            cands.append(Candidate(strikes[k], streamer_to_occ(strikes[k]), exp, k))
+        if len(cands) >= limit:
+            break
+    if not cands:
+        raise RuntimeError(f"no tradable option candidate for {symbol}: " + "; ".join(lines) + " — try another underlying with --symbol")
+    return float(spot), cands[:limit], lines
+
+
+async def choose_entry(brokerage: Any, symbol: str, today: date, *, now_et: Any, probe: QuoteProbe, lookup: Lookup | None = None,
+                       dry_run: DryRun | None = None, ladder: LadderPolicy | None = None, limit: int = 6) -> EntryPick:
+    """The first candidate that passes lookup → two-sided quote → sandbox dry run of the exact entry order (1 contract,
+    buy_to_open at the ladder's first rung). Raises with the whole diagnosis when none does."""
+    from .execution.orders import ladder_prices
+
+    ladder = ladder or LadderPolicy()
+    spot, cands, lines = await option_candidates(brokerage, symbol, today, now_et=now_et, limit=limit)
+    for c in cands:
+        if lookup is not None:
+            why = await lookup(c.occ)
+            if why:
+                lines.append(f"skip {c.symbol}: {why}")
+                continue
+        q = await probe(c.symbol)
+        if q is None:
+            lines.append(f"skip {c.symbol}: no two-sided DXLink quote within the window")
+            continue
+        price = ladder_prices("buy", q[0], q[1], steps=ladder.steps)[0]
+        if dry_run is not None:
+            why = await dry_run(c.occ, "buy_to_open", 1, price)
+            if why:
+                lines.append(f"skip {c.symbol}: sandbox dry run refused: {why}")
+                continue
+        lines.append(f"chosen {c.symbol} = {c.occ} · exp {c.expiration:%Y-%m-%d} strike {c.strike:g} · bid {q[0]:.2f} / ask {q[1]:.2f}"
+                     + (f" · sandbox dry run accepted 1 @ {price:.2f}" if dry_run is not None else ""))
+        return EntryPick(c.symbol, c.occ, spot, c.expiration, c.strike, q, lines)
+    raise RuntimeError("no candidate passed the sandbox checks:\n  " + "\n  ".join(lines) + "\n  try another underlying with --symbol")
+
+
+def sandbox_lookup(session: Any) -> Lookup:
+    """`Lookup` backed by the sandbox's instrument endpoint: unknown, inactive or closing-only → a reason."""
+    async def _lookup(occ: str) -> str | None:
+        from tastytrade.instruments import Option
+
+        try:
+            o = await Option.get(session, occ)
+        except Exception as e:  # noqa: BLE001
+            return f"not in the sandbox instrument universe ({type(e).__name__}: {error_text(e, 120)})"
+        if not getattr(o, "active", True):
+            return "inactive in the sandbox"
+        if getattr(o, "is_closing_only", False):
+            return "closing-only in the sandbox"
+        return None
+    return _lookup
 
 
 async def probe_option_quote(data_session: Any, option_symbol: str, *, window_s: float = 6.0) -> tuple[float, float] | None:
@@ -304,4 +435,5 @@ def paper_status_text(store: Store, today: date) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["FeedCheck", "RoundTrip", "measure_feed_lag", "pick_option", "probe_option_quote", "roundtrip", "halt_test", "approval_test", "paper_status_text"]
+__all__ = ["FeedCheck", "RoundTrip", "Candidate", "EntryPick", "measure_feed_lag", "option_candidates", "choose_entry", "sandbox_lookup",
+           "probe_option_quote", "roundtrip", "halt_test", "approval_test", "paper_status_text"]
