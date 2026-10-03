@@ -87,8 +87,11 @@ Append-only. Newest entry on top. Every session that touches this project adds o
   v0.4.0 deploy bundle `saa-daemon-v0.4.0.tar.gz` (sha256 `a4e5005b…`, 53 files + SHA256SUMS + `install.sh`) was sent in the
   chat; `tar xzf … && saa-m4-bundle/install.sh` installs into `Desktop/Seeking Alpha Agent /agent/` keeping `.venv/` and
   `state/`, and verifies every checksum. The Foundry `src/daemon/` is the source of truth either way.
-- **Stopped at:** M4 code complete and verified offline; live evidence needs Ryan (sandbox options level, three CLI runs on the
-  Mac, the Vercel deploy). Resume point in `next_action`.
+- **Deployed (2026-10-03 10:30 ET, bridge back):** the tarball committed to `Desktop/Seeking Alpha Agent /agent/`, its sha256
+  verified on the Mac, unpacked into `agent/daemon/` + `agent/SETUP.md` keeping `.venv/` and `state/`; **all 53 checksums match**,
+  `__version__ = "0.4.0"`, `saa_daemon/execution/` present (9 files), `py_compile` clean, no HALT file.
+- **Stopped at:** M4 code complete, verified offline and installed on the Mac; live evidence needs Ryan (sandbox options level,
+  three CLI runs on the Mac, the Vercel deploy). Resume point in `next_action`.
 - **Lessons:** the Supabase MCP tool applies DDL fine as long as the statement never contains the word "delete" (0008 avoids it;
   retention for the new tables is unnecessary — a few rows a day). A FakeClock can jump two sleepers at once; latencies that are
   *by definition* a constant (the approval timeout) are recorded as the constant, not measured. Telegram update ids are assigned on
