@@ -2,6 +2,48 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-10-03 — session 9c (Ryan's rerun on v0.4.1: the pick works; three more findings fixed, v0.4.2 on the Mac)
+
+- **Ryan's evidence (Saturday 11:32 ET, from the Mac, v0.4.1):** `./run.sh paper-roundtrip --n 1 --allow-delayed` →
+  `production chain: 33 live expirations (2026-10-05 … 2029-01-19)` · `sandbox chain: 18 live expirations of 18 listed
+  (2026-10-09 … 2028-12-15)` · `common live expirations: 18 (first 2026-10-09)` · `chosen .SPY261009C770 =
+  SPY   261009C00770000 · exp 2026-10-09 strike 770 · bid 4.75 / ask 4.77 · sandbox dry run accepted 1 @ 4.77`. The
+  order (id 1731647) was accepted with the warning `tif.next_valid_session: Your order will begin working during next
+  valid session.`, sat unfilled through the ladder (`[4.77]`), was cancelled, `reconciled: True · 6.9s`. Also:
+  `balances unavailable: … 429 Too Many Requests` at the start (gateway rate limit; everything after it worked).
+  **So the sandbox-aware pick is proven** (D24: the sandbox carries no Monday/Wednesday SPY weeklies — Fridays and
+  monthlies only — and the dry run of the exact order passed). The round trip itself cannot complete on a Saturday.
+- **Three findings in that output, fixed test-first:**
+  1. **Tick grid:** the ladder rounded SPY's 4.76 mid up onto a nickel grid and clamped to the ask (`[4.77]`). SPY/QQQ/
+     IWM/XSP trade in pennies at every price; `tick_size` was the penny-program rule only. `execution/symbols.py` now holds
+     a per-class tick table (`PENNY_ALL` for those four, `PENNY_PROGRAM` by default, and whatever a `NestedOptionChain`'s
+     `tick_sizes` say — registered by `Brokerage.nested_chain` on every fetch, so non-penny classes get their $0.05/$0.10
+     grid); `ladder_prices` / `round_to_tick` / `nearest_tick` / `tick_size` take the symbol and `OrderManager` passes the
+     ticket's OCC. SPY at 4.75/4.77 now ladders `[4.76, 4.77]` (mid first, then the ask).
+  2. **Parked orders outside hours:** broker warnings now ride on `BrokerOrder.warnings` → `Ticket.warnings` (in the
+     paper_orders payload); `paper.queued_note` turns `tif.next_valid_session` + no fill into the plain reason, printed in
+     the round-trip note and the halt-test note; `_Ctx.hours_reason()` / `hours_notice()` say before placing when the clock
+     is outside 09:30–close on a trading day (or on a non-trading day), and the RESULT line carries it.
+  3. **429:** `TastytradeBroker._call` retries a gateway 429 page after 1 s and 2 s (`retries` counted), for every API
+     call including the dry run; after that it surfaces as the usual one-line `BrokerError`.
+- **Verified:** `python3 -m pytest src/tests -q` → **143 passed** (was 139): tick table by class incl. rules registered
+  from a chain stub (`ZZT` $0.05/$0.10), `ladder_prices("buy", 4.75, 4.77, symbol=".SPY261009C770") == [4.76, 4.77]`
+  vs `[4.77]` for an unknown class; a `never`-mode ladder keeps the class grid and carries the warning onto the ticket
+  row; bridge: warnings mapped `code: message`, a 429 retried once → success, three 429s → `BrokerError` starting
+  `balances: Couldn't parse response: <html> <head><title>429 …`, dry run retried too; self-tests: round trip + halt test
+  explain a parked order (note in the paper_trades row), a filled order gets no note; `_Ctx.hours_reason()` blank only
+  09:30 ≤ t < 16:00 on a trading day, Saturday and 13:00 on an early-close day named. pyflakes clean on touched files.
+  Mac deploy: 10 files, every sha256 prefix equal on both sides (`__init__ 9fd4dd4bb8e95300 … SETUP 27dec9cf3b7a3e80`),
+  `__version__ = "0.4.2"`.
+- **Not yet verified (needs Ryan, on a trading day inside the session):** `paper-roundtrip --n 3 --allow-delayed`,
+  `halt-test --allow-delayed`, `approval-test`. Expected on Monday: entry fills at 4.7x-style mid on the first rung
+  (the sandbox fills at the limit during the session), exit fills at its mid rung, `RESULT: ALL ROUND TRIPS FILLED AND
+  RECONCILED`.
+- **Stopped at:** nothing left to run on Saturday. M4's open question narrowed to the Monday runs + Vercel.
+- **Lessons:** the sandbox is a venue with session hours — outside them it parks DAY orders and nothing fills; a self-
+  test must say that rather than report a bare failure. Tick rules are per class and the broker's chain already carries
+  them — use them. The cert gateway rate-limits bursts with an HTML 429 the SDK cannot parse — retry, briefly.
+
 ## 2026-10-03 — session 9b (Ryan's first sandbox run failed on instrument validation — fixed test-first, v0.4.1 on the Mac)
 
 - **Ryan's evidence (Saturday, from the Mac, v0.4.0):**
