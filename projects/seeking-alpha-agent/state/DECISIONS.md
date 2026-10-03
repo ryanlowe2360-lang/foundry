@@ -3,6 +3,53 @@
 Lightweight decision log. Newest on top. Record anything a future session (or future
 Ryan) would otherwise re-litigate.
 
+## D25 (2026-10-03) — The sandbox fills by a price rule, not a market: the self-tests pick a contract under a price cap, and a sandbox fill price is plumbing, never P&L
+
+- **Context:** read before Ryan's Monday runs, tastytrade's own sandbox page (developer.tastytrade.com/docs/sandbox) says the
+  cert environment's fill simulator is three lines: a **limit order priced under $3 fills immediately**, a **limit order at
+  $3 or above goes Live and never fills**, a **market order always fills — at $1**; no market data is served; trades,
+  transactions and positions are cleared every 24 hours. D24's chooser took the nearest-ATM strike — `.SPY261009C770` at
+  4.75 / 4.77 on Saturday — and the sandbox dry run accepts that order (a dry run validates the order, not whether it will
+  fill). On the documented rule that entry rests unfilled through the whole ladder **on any day**: Monday's
+  `paper-roundtrip` and `halt-test` would both have ended `NOT OK` (reproduced offline: `entry unfilled … ladder [4.76,
+  4.77]`). Session 9c's reading of Saturday's non-fill — "the sandbox fills only during the regular session" — was an
+  inference from the `tif.next_valid_session` warning; the price rule explains that non-fill by itself, and whether an
+  under-$3 limit fills outside the session is **not documented** (the code and docs now say "may park", not "fills nothing").
+- **Options:** (a) keep the ATM strike and add a marketable/market fallback — a market order fills at $1 whatever the
+  contract, so the "fill" would prove nothing about the ladder; (b) switch the self-tests to a cheap underlying — still
+  needs a price check, and D24's two-chain logic is already proven on SPY; (c) give the chooser a price cap and walk out
+  of the money to the first strike that fits.
+- **Chose:** (c). `paper.selftest_price_cap()` = `min($2.99, Tier 1 floor_premium_max ÷ 100)` = **$1.50** today — inside the
+  sandbox's rule, and no dearer than the contract the engine's one-contract floor itself buys with a $1,000 account (so the
+  self-test contract looks like a real M4 entry, and four of them fit the cash account even if proceeds are not reusable
+  the same day). With a cap, `option_candidates` orders an expiration's strikes from the at-the-money strike *outward*
+  (calls at and above it, ascending; up to 60, normally all from the nearest common expiration) and `choose_entry` checks
+  quote → cap → sandbox lookup → sandbox dry run; the first strike whose **ask** is at or under the cap wins, so every rung
+  of the entry ladder (mid → ask), the exit ladder (mid → bid) and the kill switch's first order (the bid) is a price the
+  sandbox fills. All candidate strikes are quoted over **one** DXLink connection (`probe_option_quotes`); dearer strikes
+  cost no sandbox call and are reported on one line (`over the cap (2026-10-09): 770 @ 4.77 · …`); a dry-run refusal (e.g.
+  buying power) falls through to the next, cheaper strike. The `chosen … sandbox dry run accepted` line is unchanged and
+  still last. `FakeBroker(mode="sandbox")` implements the documented rule so the suite — including the two CLI commands end
+  to end — runs against the behaviour the real sandbox is documented to have.
+- **Riding along (same release, v0.4.3):** round trips are numbered in their evidence key (three that finish inside one
+  second no longer overwrite each other's `paper_trades` / `paper_orders` rows); the approval test lets a tapped update
+  finish — decision edit, callback answer, offset save — before tearing the poller down (it was cancelled mid-edit: the
+  button kept spinning and the update was re-delivered to the next poller); a `Filled` order whose leg lists no fill rows
+  is booked as one *reported* fill for the full quantity at its own limit price instead of orphaning the position.
+- **What this means for the engine's paper path (code unchanged):** engine entries at this account size are ≤ $1.50
+  contracts, so they fill in the sandbox — at the daemon's own limit, whatever the market does. A position marked at $3 or
+  more **cannot be sold at a limit there**: the exit ladder gives up, the flatten ladder's market order books **$1**. A
+  +3R winner on real marks can therefore show as a loss in `saa.paper_trades.realized_r`. Sandbox fills prove plumbing
+  (accepted → filled → closed → reconciled, time to flat); **edge is read from the shadow ledger** (entry at the real ask,
+  marked at the real bid) — which is what the posterior, the Kelly size and the spec's M5 gate ("posterior expectancy > 0")
+  already use. `/halt` stays inside its 10-second budget either way (market at 6 s; tested on the sandbox rule).
+- **Open for Ryan (recorded in STATE):** `saa_dashboard` sums every closed `saa.paper_trades` row into the paper "realized"
+  line, the R histogram and the closed count — CLI self-test rows (`lane` roundtrip / halttest) and sandbox-rule prices
+  included. Whether the dashboard should separate them is a feature change (migration 0009), not decided here.
+- **Revisit if:** tastytrade changes the sandbox rule (the constants live in `execution/broker.py`); Tier 1's floor changes
+  (the cap follows it up to $2.99); or M5 replaces the sandbox with production fills (then the cap goes and the dry run
+  becomes the pre-trade check of the real order path).
+
 ## D24 (2026-10-03) — The sandbox self-tests pick the instrument from the intersection of both chains and dry-run it in the sandbox first
 
 - **Context:** Ryan's first `./run.sh paper-roundtrip --n 1 --allow-delayed` (Saturday, 15-min-delayed quote) chose

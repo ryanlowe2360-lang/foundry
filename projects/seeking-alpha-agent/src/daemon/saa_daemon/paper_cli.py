@@ -14,7 +14,8 @@ from .config import Settings
 from .execution import KillSwitch, LadderPolicy
 from .execution.telegram_bot import TelegramBot
 from .mirror import MirrorError, SupabaseMirror
-from .paper import EntryPick, approval_test, choose_entry, halt_test, measure_feed_lag, paper_status_text, probe_option_quote, roundtrip, sandbox_lookup
+from .paper import (EntryPick, approval_test, choose_entry, halt_test, measure_feed_lag, paper_status_text, price_cap_reason, probe_option_quote,
+                    probe_option_quotes, roundtrip, sandbox_lookup, selftest_price_cap)
 from .store import Store
 
 log = logging.getLogger("saa.paper")
@@ -71,23 +72,26 @@ class _Ctx:
             self.mirror.queue("saa_log_run", {"p_job": job, "p_ok": ok, "p_detail": detail}, self.clock.now())
 
     def hours_reason(self) -> str:
-        """Non-empty when the clock is outside a trading day's regular session — the sandbox parks orders then."""
+        """Non-empty when the clock is outside a trading day's regular session — the sandbox may park orders then (it
+        answered Ryan's Saturday order with `tif.next_valid_session`); whether it still fills one is not documented."""
         now = self.clock.now()
         if not is_trading_day(self.today):
-            return f"{et(now):%a %Y-%m-%d} is not a trading day: the sandbox parks orders for the next session and fills nothing — rerun 09:30–16:00 ET on a trading day"
+            return (f"{et(now):%a %Y-%m-%d} is not a trading day: the sandbox may park orders for the next session instead of filling them — "
+                    "the runs that count belong 09:30–16:00 ET on a trading day")
         if now < self.sched.open or now >= self.sched.close:
-            return (f"{et(now):%H:%M} ET is outside regular hours ({et(self.sched.open):%H:%M}–{et(self.sched.close):%H:%M}): the sandbox parks orders for the "
-                    "next session and fills nothing — rerun inside the session")
+            return (f"{et(now):%H:%M} ET is outside regular hours ({et(self.sched.open):%H:%M}–{et(self.sched.close):%H:%M}): the sandbox may park orders "
+                    "for the next session instead of filling them — the runs that count belong inside the session")
         return ""
 
     def hours_notice(self) -> None:
         why = self.hours_reason()
         if why:
-            print(f"⚠ {why}; this run proves placement → cancel → reconcile only")
+            print(f"⚠ {why}; an unfilled order here is not a verdict on the order path")
 
     async def entry_quote(self, symbol: str, allow_delayed: bool) -> tuple[EntryPick, Any]:
-        """Feed gate, then the validated instrument choice (both chains → sandbox lookup → DXLink quote → sandbox dry
-        run). Raises when the feed is not real-time and --allow-delayed is absent, or when no candidate passes."""
+        """Feed gate, then the validated instrument choice (both chains → DXLink quotes → the sandbox price cap →
+        sandbox lookup → sandbox dry run). Raises when the feed is not real-time and --allow-delayed is absent, or when
+        no candidate passes."""
         feed = await measure_feed_lag(self.brokerage.data, [symbol], session_open=self.sched.open)
         print(f"feed lag: {feed.mode} ({feed.note})")
         if feed.mode != "realtime":
@@ -99,7 +103,9 @@ class _Ctx:
         try:
             pick = await choose_entry(self.brokerage, symbol, self.today, now_et=et(self.clock.now()).time(),
                                       probe=lambda sym: probe_option_quote(self.brokerage.data, sym),
-                                      lookup=sandbox_lookup(self.brokerage.broker), dry_run=self.broker.dry_run)
+                                      probe_many=lambda syms: probe_option_quotes(self.brokerage.data, syms),
+                                      lookup=sandbox_lookup(self.brokerage.broker), dry_run=self.broker.dry_run,
+                                      max_ask=selftest_price_cap(), max_ask_why=price_cap_reason())
         except RuntimeError as e:
             print(f"  {e}")
             raise RuntimeError("no option the sandbox trades could be found — see the diagnosis above") from None
@@ -119,7 +125,7 @@ async def run_roundtrip(settings: Settings, *, symbol: str, n: int, allow_delaye
         for i in range(max(1, n)):
             print(f"--- round trip {i + 1}/{n} ---")
             rt = await roundtrip(c.broker, c.store, c.clock, option_symbol, quote, run_id=run_id, trade_date=c.today, ladder=LadderPolicy(),
-                                 mirror=c.mirror, feed=feed)
+                                 mirror=c.mirror, feed=feed, seq=i + 1)
             e, x = rt.entry, rt.exit
             print(f"entry {e['status']}: {e['filled_quantity']}/{e['quantity']} @ {e['avg_fill_price']} ladder {e['limit_prices']} orders {e['broker_order_ids']} ({e['reason']})")
             print(f"exit  {x['status']}: {x['filled_quantity']}/{x['quantity']} @ {x['avg_fill_price']} ladder {x['limit_prices']} orders {x['broker_order_ids']} ({x['reason']})")

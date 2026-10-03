@@ -106,18 +106,27 @@ class TastytradeBroker:
         for f in (getattr(leg, "fills", None) or []):
             at = getattr(f, "filled_at", None) or datetime.now(timezone.utc)
             fills.append(BrokerFill(str(getattr(f, "fill_id", "")), int(getattr(f, "quantity", 0) or 0), float(getattr(f, "fill_price", 0) or 0), at))
-        qty = sum(x.quantity for x in fills)
-        avg = round(sum(x.quantity * x.price for x in fills) / qty, 4) if qty else None
         raw_status = str(getattr(po, "status", "") or "")
         status = STATUS_MAP.get(raw_status, "live")
-        if status == "cancelled" and leg is not None and qty and qty >= int(getattr(leg, "quantity", 0) or 0):
+        price = _f(getattr(po, "price", None))
+        order_type = "market" if str(getattr(po, "order_type", "")) == "Market" else "limit"
+        leg_qty = int(getattr(leg, "quantity", 0) or 0) if leg is not None else 0
+        if status == "filled" and not fills and leg_qty > 0:
+            # `Filled` with no fill rows on the leg (a simulated fill may not list them): the quantity must still be
+            # accounted for, or the order path would treat a held position as "nothing filled" and never close it.
+            # One *reported* fill at the order's own limit price; a market order's price is unknown here → 0.0.
+            px = abs(price) if (price is not None and order_type == "limit") else 0.0
+            at = getattr(po, "updated_at", None) or datetime.now(timezone.utc)
+            fills.append(BrokerFill(f"{getattr(po, 'id', '')}:reported", leg_qty, px, at))
+            log.warning("order %s is Filled without fill rows — booked %d @ %.2f as reported", getattr(po, "id", "?"), leg_qty, px)
+        qty = sum(x.quantity for x in fills)
+        avg = round(sum(x.quantity * x.price for x in fills) / qty, 4) if qty else None
+        if status == "cancelled" and leg is not None and qty and qty >= leg_qty:
             status = "filled"
         action_raw = str(getattr(leg, "action", "") or "")
         action = {v: k for k, v in ACTIONS.items()}.get(action_raw, action_raw.lower().replace(" ", "_"))
-        price = _f(getattr(po, "price", None))
-        order_type = "market" if str(getattr(po, "order_type", "")) == "Market" else "limit"
         return BrokerOrder(order_id=str(getattr(po, "id", "")), symbol=str(getattr(leg, "symbol", "") or ""), action=action,
-                           quantity=int(getattr(leg, "quantity", 0) or 0), order_type=order_type,
+                           quantity=leg_qty, order_type=order_type,
                            price=abs(price) if (price is not None and order_type == "limit") else None, status=status, filled_quantity=qty, avg_fill_price=avg, fills=fills,
                            reject_reason=getattr(po, "reject_reason", None), external_id=getattr(po, "external_identifier", None),
                            updated_at=getattr(po, "updated_at", None), fees=fees)

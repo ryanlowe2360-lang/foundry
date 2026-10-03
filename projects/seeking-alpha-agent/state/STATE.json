@@ -5,7 +5,7 @@
   "status": "building",
   "example": false,
   "created": "2026-09-26",
-  "last_touched": "2026-10-03T15:43:03Z",
+  "last_touched": "2026-10-03T23:59:00Z",
   "repo": null,
   "deploy_url": null,
   "milestones": [
@@ -47,10 +47,14 @@
     }
   ],
   "current_milestone": 4,
-  "next_action": "Close M4 (session 10, Mac linked): read Ryan's Monday runs \u2014 saa.run_log rows paper:roundtrip (detail.pick + round_trips) / paper:halt_test / paper:approval_test and saa.paper_trades \u2014 via the Supabase connector; if anything failed, fix it in src/daemon/saa_daemon/execution/ or paper.py with a test first (pytest src/tests -q, 143 green) and redeploy to the Mac with checksums; once \u22653 reconciled round trips + halt \u226410 s + a timeout = Skip row exist, re-screenshot the dashboard with that sandbox data (cd src/dashboard && npm run build && node scripts/screenshot.mjs --out ../../notes/screenshots --name dashboard-sandbox), walk SPEC M4's four criteria in BUILDLOG.md, then touch --milestone 4 --milestone-status done --current-milestone 5.",
+  "next_action": "Close M4 (walkthrough in progress; daemon v0.4.3 on the Mac): grade Ryan's ./run.sh smoke on v0.4.3, record the Vercel URL with touch --deploy-url, then on a trading day 09:30-16:00 ET read his three runs via the Supabase connector \u2014 saa.run_log paper:roundtrip (detail.pick.max_ask 1.5, n_ok 3, every round_trips[].reconciled true), paper:halt_test (seconds <= 10), paper:approval_test (one timeout, one approved) plus saa.paper_trades / saa.approvals; if anything failed, fix it in src/daemon/saa_daemon/paper.py or execution/ with a test first (python3 -m pytest src/tests -q, 160 green) and redeploy to the Mac with sha256 on both sides (fresh staged path); then save the saa_dashboard document as a fixture and re-screenshot (cd src/dashboard && npm run build && node scripts/screenshot.mjs --fixture <fixture> --out ../../notes/screenshots --name dashboard-sandbox), walk SPEC M4's four criteria in BUILDLOG.md, and touch --milestone 4 --milestone-status done --current-milestone 5.",
   "blockers": [],
-  "open_questions": [],
-  "sessions": 9,
+  "open_questions": [
+    "M4 live evidence (Ryan, from the Mac, v0.4.3): on a trading day inside 09:30-16:00 ET with ./run.sh session stopped \u2014 ./run.sh paper-roundtrip --n 3 --allow-delayed, ./run.sh halt-test --allow-delayed (needs <= 10 s), ./run.sh approval-test twice (let one time out, Approve the other); paste the output. Milestone 4 cannot close without them.",
+    "Market-data entitlement (D19): the production DXLink feed is 15+ minutes delayed on the API quote token (level api) even with the account funded. Ryan asks tastytrade support for real-time data on the API streamer; engine and paper path stay observe-only until it is real-time.",
+    "Dashboard (feature change, Ryan decides): saa_dashboard sums every closed saa.paper_trades row into the paper realized line, the R histogram and the closed count \u2014 including CLI self-test rows (lane roundtrip / halttest) and the sandbox's rule-based fill prices (under $3 at the daemon's own limit, market at $1; D25). Keep as is, or separate self-tests and label sandbox fills (migration 0009 + a self-tests count in the paper panel)?"
+  ],
+  "sessions": 10,
   "tags": [
     "trading",
     "options",

@@ -22,8 +22,9 @@ from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from .clock import Clock, et
+from .engine.tier1 import TIER1, Tier1
 from .execution import ApprovalGate, ExecutionPolicy, Executor, KillSwitch, LadderPolicy, OrderManager, PaperTrade, Ticket
-from .execution.broker import Broker, BrokerError, error_text
+from .execution.broker import SANDBOX_LIMIT_FILLS_BELOW, SANDBOX_MARKET_FILL_PRICE, Broker, BrokerError, error_text
 from .execution.symbols import streamer_to_occ
 from .mirror import MirrorError, SupabaseMirror
 from .store import Store
@@ -31,6 +32,7 @@ from .store import Store
 log = logging.getLogger("saa.paper")
 
 QuoteProbe = Callable[[str], Awaitable[tuple[float, float] | None]]      # option streamer symbol → (bid, ask)
+QuoteBatchProbe = Callable[[list[str]], Awaitable[dict[str, tuple[float, float]]]]   # many symbols, one connection → the two-sided ones
 
 
 @dataclass
@@ -74,13 +76,33 @@ async def measure_feed_lag(data_session: Any, symbols: list[str], *, window_s: f
 # The sandbox (cert) environment has its own, smaller and sometimes stale instrument universe; its order router
 # validates against *that*, not against production's chain (2026-10-03: production's nearest SPY expiration was
 # refused with `instrument_validation_failed: Trading of SPY 261005C00770000 is not supported`). So the self-tests
-# choose from the intersection of both chains, nearest live expiration first and nearest-ATM first, and make each
-# candidate pass three checks before anything is placed: the sandbox knows the instrument and it is not
-# closing-only (`lookup`), production DXLink quotes it two-sided (`probe`), and the sandbox accepts the exact entry
-# order in a dry run (`dry_run`). Every step is printed, so a refusal is a diagnosis rather than a mystery.
+# choose from the intersection of both chains, nearest live expiration first, and make each candidate pass three checks
+# before anything is placed: production DXLink quotes it two-sided (`probe`), the sandbox knows the instrument and it is
+# not closing-only (`lookup`), and the sandbox accepts the exact entry order in a dry run (`dry_run`). Every step is
+# printed, so a refusal is a diagnosis rather than a mystery.
+#
+# The sandbox's fills are a price rule, not a market (D25; `execution.broker.SANDBOX_LIMIT_FILLS_BELOW`): a limit order
+# fills only when priced under $3, at $3 or more it rests and never fills, a market order fills at $1. A dry run accepts
+# either — it validates the order, not whether it will fill. So the self-tests also take a price cap (`max_ask`) and walk
+# out of the money, strike by strike, to the first contract whose *ask* is under it: every rung of the entry ladder (mid →
+# ask), the exit ladder (mid → bid) and the kill switch's first order (the bid) is then a price the sandbox fills.
 
 Lookup = Callable[[str], Awaitable[str | None]]              # OCC → None if tradable in the sandbox, else why not
 DryRun = Callable[[str, str, int, float | None], Awaitable[str | None]]   # (OCC, action, qty, price) → None if accepted
+
+CAPPED_STRIKES_PER_EXPIRATION = 60      # with a price cap: how far out of the money one expiration is walked (a monthly needs many strikes)
+CAPPED_CANDIDATES = 60                  # … and how many strikes are quoted in the one DXLink batch
+
+
+def selftest_price_cap(tier1: Tier1 = TIER1) -> float:
+    """The dearest ask a self-test contract may have: inside the sandbox's fill rule (a limit fills only under $3) and no
+    dearer than the contract the engine itself buys at this account size (Tier 1's one-contract floor, $150)."""
+    return round(min(SANDBOX_LIMIT_FILLS_BELOW - 0.01, tier1.floor_premium_max / 100.0), 2)
+
+
+def price_cap_reason(tier1: Tier1 = TIER1) -> str:
+    return (f"the sandbox fills a limit order only under {SANDBOX_LIMIT_FILLS_BELOW:.2f} (at {SANDBOX_LIMIT_FILLS_BELOW:.2f} or more it never fills; "
+            f"a market order fills at {SANDBOX_MARKET_FILL_PRICE:.2f}), and {tier1.floor_premium_max / 100.0:.2f} is the engine's one-contract floor")
 
 
 @dataclass
@@ -100,10 +122,11 @@ class EntryPick:
     strike: float
     quote: tuple[float, float]
     lines: list[str]     # the diagnosis, one line per step — printed by the CLI and logged as evidence
+    max_ask: float | None = None      # the price cap the pick had to fit under (None = uncapped)
 
     def as_dict(self) -> dict[str, Any]:
         return {"symbol": self.symbol, "occ": self.occ, "spot": self.spot, "expiration": self.expiration.isoformat(),
-                "strike": self.strike, "quote": list(self.quote), "lines": list(self.lines)}
+                "strike": self.strike, "quote": list(self.quote), "max_ask": self.max_ask, "lines": list(self.lines)}
 
 
 def _chain_map(expirations: Any, *, today: date, now_et: Any) -> dict[date, dict[float, str]]:
@@ -124,14 +147,21 @@ def _span(exps: list[date]) -> str:
     return f"{min(exps):%Y-%m-%d} … {max(exps):%Y-%m-%d}" if exps else "none"
 
 
-async def option_candidates(brokerage: Any, symbol: str, today: date, *, now_et: Any, limit: int = 6,
-                            per_expiration: int = 3) -> tuple[float, list[Candidate], list[str]]:
-    """(spot, candidates nearest-expiration-first then nearest-ATM-first, diagnosis lines).
+async def option_candidates(brokerage: Any, symbol: str, today: date, *, now_et: Any, limit: int | None = None,
+                            per_expiration: int | None = None, max_ask: float | None = None) -> tuple[float, list[Candidate], list[str]]:
+    """(spot, candidates nearest-expiration-first, diagnosis lines).
 
     Candidates come from the production chain restricted to expirations and strikes the sandbox chain also lists;
-    when the sandbox chain cannot be read the production chain alone is used and the diagnosis says so."""
+    when the sandbox chain cannot be read the production chain alone is used and the diagnosis says so. Without a price
+    cap the strikes of an expiration come nearest-ATM first (3 per expiration, 6 in all). With one (`max_ask`) they come
+    from the at-the-money strike *outward* — call strikes at and above it, ascending, i.e. dearest first — so the first
+    strike that fits under the cap is the nearest to the money that does (up to 60, normally all from the nearest
+    expiration); in-the-money strikes only cost more and are never candidates."""
     from .chains import from_sdk_nested
 
+    capped = max_ask is not None
+    limit = limit if limit is not None else (CAPPED_CANDIDATES if capped else 6)
+    per_expiration = per_expiration if per_expiration is not None else (CAPPED_STRIKES_PER_EXPIRATION if capped else 3)
     spots = await brokerage.spot_prices([symbol])
     spot = spots.get(symbol)
     if not spot:
@@ -167,7 +197,14 @@ async def option_candidates(brokerage: Any, symbol: str, today: date, *, now_et:
         strikes = prod[exp]
         if sand is not None:
             strikes = {k: v for k, v in strikes.items() if k in sand.get(exp, {})}
-        for k in sorted(strikes, key=lambda k: (abs(k - spot), k))[:per_expiration]:
+        if not strikes:
+            continue
+        if capped:
+            atm = min(strikes, key=lambda k: (abs(k - spot), k))
+            ordered = sorted(k for k in strikes if k >= atm)
+        else:
+            ordered = sorted(strikes, key=lambda k: (abs(k - spot), k))
+        for k in ordered[:per_expiration]:
             cands.append(Candidate(strikes[k], streamer_to_occ(strikes[k]), exp, k))
         if len(cands) >= limit:
             break
@@ -176,33 +213,68 @@ async def option_candidates(brokerage: Any, symbol: str, today: date, *, now_et:
     return float(spot), cands[:limit], lines
 
 
+def _over_the_cap_lines(rich: list[tuple[Candidate, tuple[float, float]]]) -> list[str]:
+    """One line per expiration for the strikes that were passed over because they cost more than the cap (a long walk
+    is shown as its first three and last two strikes)."""
+    by_exp: dict[date, list[str]] = {}
+    for c, q in rich:
+        by_exp.setdefault(c.expiration, []).append(f"{c.strike:g} @ {q[1]:.2f}")
+    out = []
+    for exp, items in sorted(by_exp.items()):
+        shown = items if len(items) <= 8 else items[:3] + [f"… {len(items) - 5} more …"] + items[-2:]
+        out.append(f"over the cap ({exp:%Y-%m-%d}): " + " · ".join(shown))
+    return out
+
+
 async def choose_entry(brokerage: Any, symbol: str, today: date, *, now_et: Any, probe: QuoteProbe, lookup: Lookup | None = None,
-                       dry_run: DryRun | None = None, ladder: LadderPolicy | None = None, limit: int = 6) -> EntryPick:
-    """The first candidate that passes lookup → two-sided quote → sandbox dry run of the exact entry order (1 contract,
-    buy_to_open at the ladder's first rung). Raises with the whole diagnosis when none does."""
+                       dry_run: DryRun | None = None, ladder: LadderPolicy | None = None, limit: int | None = None,
+                       max_ask: float | None = None, max_ask_why: str = "", probe_many: QuoteBatchProbe | None = None) -> EntryPick:
+    """The first candidate that passes: a two-sided quote → (the price cap) → the sandbox lookup → a sandbox dry run of
+    the exact entry order (1 contract, buy_to_open at the ladder's first rung). Raises with the whole diagnosis when
+    none does. `probe_many` quotes every candidate over one connection; without it `probe` is asked strike by strike."""
     from .execution.orders import ladder_prices
 
     ladder = ladder or LadderPolicy()
-    spot, cands, lines = await option_candidates(brokerage, symbol, today, now_et=now_et, limit=limit)
+    spot, cands, lines = await option_candidates(brokerage, symbol, today, now_et=now_et, limit=limit, max_ask=max_ask)
+    if max_ask is not None:
+        lines.append(f"price cap: ask ≤ {max_ask:.2f}" + (f" — {max_ask_why}" if max_ask_why else ""))
+    quotes: dict[str, tuple[float, float]] | None = None
+    if probe_many is not None:
+        try:
+            quotes = dict(await probe_many([c.symbol for c in cands]))
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"quote probe failed ({type(e).__name__}: {error_text(e, 120)})")
+            raise RuntimeError("no candidate passed the sandbox checks:\n  " + "\n  ".join(lines) + "\n  try again, or another underlying with --symbol") from None
+        n_quoted = sum(1 for c in cands if c.symbol in quotes)
+        lines.append(f"quotes: {n_quoted} of {len(cands)} candidate strikes two-sided on DXLink")
+        if n_quoted == 0:
+            raise RuntimeError("no candidate passed the sandbox checks:\n  " + "\n  ".join(lines) + "\n  no strike was quoted two-sided within the window — "
+                               "try again, or another underlying with --symbol")
+    rich: list[tuple[Candidate, tuple[float, float]]] = []
     for c in cands:
+        q = quotes.get(c.symbol) if quotes is not None else await probe(c.symbol)
+        if q is None:
+            lines.append(f"skip {c.symbol}: no two-sided DXLink quote within the window")
+            continue
+        if max_ask is not None and q[1] > max_ask + 1e-9:
+            rich.append((c, q))
+            continue
         if lookup is not None:
             why = await lookup(c.occ)
             if why:
                 lines.append(f"skip {c.symbol}: {why}")
                 continue
-        q = await probe(c.symbol)
-        if q is None:
-            lines.append(f"skip {c.symbol}: no two-sided DXLink quote within the window")
-            continue
         price = ladder_prices("buy", q[0], q[1], steps=ladder.steps, symbol=c.occ)[0]
         if dry_run is not None:
             why = await dry_run(c.occ, "buy_to_open", 1, price)
             if why:
                 lines.append(f"skip {c.symbol}: sandbox dry run refused: {why}")
                 continue
+        lines.extend(_over_the_cap_lines(rich))
         lines.append(f"chosen {c.symbol} = {c.occ} · exp {c.expiration:%Y-%m-%d} strike {c.strike:g} · bid {q[0]:.2f} / ask {q[1]:.2f}"
                      + (f" · sandbox dry run accepted 1 @ {price:.2f}" if dry_run is not None else ""))
-        return EntryPick(c.symbol, c.occ, spot, c.expiration, c.strike, q, lines)
+        return EntryPick(c.symbol, c.occ, spot, c.expiration, c.strike, q, lines, max_ask)
+    lines.extend(_over_the_cap_lines(rich))
     raise RuntimeError("no candidate passed the sandbox checks:\n  " + "\n  ".join(lines) + "\n  try another underlying with --symbol")
 
 
@@ -243,15 +315,48 @@ async def probe_option_quote(data_session: Any, option_symbol: str, *, window_s:
         return best
 
 
+async def probe_option_quotes(data_session: Any, option_symbols: list[str], *, window_s: float = 6.0, settle_s: float = 1.0) -> dict[str, tuple[float, float]]:
+    """Two-sided quotes for many option symbols over one DXLink connection → {symbol: (bid, ask)}. Returns once every
+    symbol is two-sided, or `settle_s` after every symbol has reported at least once (a strike with no bid never
+    becomes two-sided), or when the window ends."""
+    from tastytrade import DXLinkStreamer
+    from tastytrade.dxfeed import Quote
+
+    want = list(dict.fromkeys(option_symbols))
+    out: dict[str, tuple[float, float]] = {}
+    if not want:
+        return out
+    wanted, seen = set(want), set()
+    async with DXLinkStreamer(data_session) as st:
+        await st.subscribe(Quote, want)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + window_s
+        while loop.time() < deadline and len(out) < len(want):
+            try:
+                q = await asyncio.wait_for(st.get_event(Quote), timeout=max(0.05, deadline - loop.time()))
+            except TimeoutError:
+                break
+            sym = q.event_symbol
+            if sym not in wanted:
+                continue
+            if sym not in seen:
+                seen.add(sym)
+                if len(seen) == len(want):
+                    deadline = min(deadline, loop.time() + settle_s)
+            if q.bid_price and q.ask_price and float(q.ask_price) >= float(q.bid_price) > 0:
+                out[sym] = (float(q.bid_price), float(q.ask_price))
+    return out
+
+
 # ------------------------------------------------------------------------------------------------------- flows
-QUEUED_WARNING = "tif.next_valid_session"      # the sandbox outside regular hours: accepted, parked for the next session, never fills now
+QUEUED_WARNING = "tif.next_valid_session"      # the sandbox's warning on an order placed outside regular hours ("will begin working during next valid session")
 
 
 def queued_note(ticket: Ticket) -> str:
     """The plain-English reason when the broker parked an order for the next session instead of working it."""
     if any(QUEUED_WARNING in w for w in ticket.warnings) and ticket.filled_quantity < ticket.quantity:
-        return ("the sandbox queued the order for the next session (outside regular hours it accepts orders but fills nothing); "
-                "it was cancelled cleanly — fills need a trading day between 09:30 and 16:00 ET")
+        return ("the sandbox queued the order for the next session (its own warning: outside regular hours an order waits for the next "
+                "session) and it did not fill; it was cancelled cleanly — run the fills on a trading day between 09:30 and 16:00 ET")
     return ""
 
 
@@ -279,12 +384,14 @@ class RoundTrip:
 
 async def roundtrip(broker: Broker, store: Store, clock: Clock, option_symbol: str, quote: tuple[float, float], *, run_id: str, trade_date: date,
                     ladder: LadderPolicy | None = None, quote_fn: Callable[[], tuple[float, float] | None] | None = None,
-                    mirror: SupabaseMirror | None = None, feed: FeedCheck | None = None) -> RoundTrip:
-    """One sandbox round trip through the real ladder: buy 1 at mid → sell 1 to close → positions/orders reconciled."""
+                    mirror: SupabaseMirror | None = None, feed: FeedCheck | None = None, seq: int = 0) -> RoundTrip:
+    """One sandbox round trip through the real ladder: buy 1 at mid → sell 1 to close → positions/orders reconciled.
+    `seq` (1, 2, 3 … from the CLI) goes into the evidence key: the sandbox fills at once, so several round trips can
+    finish inside one wall-clock second and would otherwise overwrite each other's `paper_trades` / `paper_orders` rows."""
     om = OrderManager(broker, store, clock, ladder or LadderPolicy(), run_id=run_id, trade_date=trade_date)
     occ = streamer_to_occ(option_symbol)
     t0 = clock.now()
-    key = f"roundtrip|{option_symbol}|{et(t0):%H%M%S}"
+    key = f"roundtrip|{option_symbol}|{et(t0):%H%M%S}" + (f"|{seq}" if seq else "")
     entry = await om.work(Ticket.new(key, option_symbol, "buy", 1, quote[0], quote[1], clock.now(), kind="entry"), quote_fn=quote_fn)
     exit_ = Ticket.new(key, option_symbol, "sell", 1, quote[0], quote[1], clock.now(), kind="exit", seq=1)
     if entry.filled_quantity > 0:
@@ -379,6 +486,9 @@ async def halt_test(broker: Broker, store: Store, clock: Clock, option_symbol: s
     return out
 
 
+TAP_GRACE_S = 10.0      # how long the approval test lets a tapped update finish (edit, callback answer, offset save) before teardown
+
+
 async def approval_test(bot: Any, store: Store, clock: Clock, *, timeout_s: float, run_id: str, trade_date: date,
                         load_offset: Callable[[], Awaitable[int]] | None = None, save_offset: Callable[[int], Awaitable[None]] | None = None,
                         keepalive: Callable[[], Awaitable[None]] | None = None) -> dict[str, Any]:
@@ -419,6 +529,12 @@ async def approval_test(bot: Any, store: Store, clock: Clock, *, timeout_s: floa
         status = await gate.wait(p)
     finally:
         stop.set()
+        if p.status in ("approved", "skipped") and not poll.done():
+            # A tap resolved the proposal from inside the poll task, which is still mid-update: the decision edit of the
+            # message, the callback answer (it stops the button's spinner) and the offset save (it confirms the update so
+            # the next poller is not handed it again). Let that batch finish — the loop ends by itself because `stop` is
+            # set. A poller idling in a long-poll (the timeout path) has nothing in flight and is simply cancelled.
+            await asyncio.wait({poll}, timeout=TAP_GRACE_S)
         for task in (poll, ka):
             task.cancel()
         await asyncio.gather(poll, ka, return_exceptions=True)
@@ -448,4 +564,5 @@ def paper_status_text(store: Store, today: date) -> str:
 
 
 __all__ = ["FeedCheck", "RoundTrip", "Candidate", "EntryPick", "measure_feed_lag", "option_candidates", "choose_entry", "sandbox_lookup",
-           "probe_option_quote", "roundtrip", "halt_test", "approval_test", "paper_status_text"]
+           "probe_option_quote", "probe_option_quotes", "selftest_price_cap", "price_cap_reason", "roundtrip", "halt_test", "approval_test",
+           "paper_status_text"]

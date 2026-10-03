@@ -164,7 +164,7 @@ marked at real DXLink bids** — still no orders. What you will notice:
 Sizing is at the one-contract floor until the ledger has trades (the posterior starts shrunk to breakeven — plan §3),
 and the 10-day M1 record streak remains the gate before any sizing above the floor is trusted.
 
-## 8. M4 — paper execution in the sandbox (v0.4.2): what changes for you
+## 8. M4 — paper execution in the sandbox (v0.4.3): what changes for you
 
 Same `./run.sh session`; the daemon now **proposes** every gate-fired entry on Telegram and places it in the sandbox
 account only after you tap **✅ Approve** (⏭ Skip or no answer within 3 minutes = Skip, logged). Exits need no tap.
@@ -183,16 +183,27 @@ exactly like the engine.
    ./run.sh halt-test                    # buy 1, kill switch → flat; prints the seconds (needs ≤ 10)
    ./run.sh approval-test                # a test proposal; tap Approve or Skip, or wait 3 min to see "timeout → Skip"
    ```
-   Outside regular hours (or while the feed is delayed) add `--allow-delayed` to the first two: the sandbox fills either
-   way, but the quote is then stale and the row says so. Run them on a real-time feed once that exists.
-   The first two print how the option was chosen (`production chain … / sandbox chain … / common live expirations … /
-   chosen …`): the sandbox trades a smaller, sometimes stale set of contracts than production, so the test picks the
-   nearest expiration and strike both know and dry-runs the order there first. If it ends with "no option the sandbox
-   trades could be found", read those lines — usually the sandbox chain is stale — and try `--symbol QQQ` or `--symbol AAPL`.
-   **Fills only happen during the regular session (09:30–16:00 ET on a trading day):** outside it the sandbox accepts
-   the order, parks it for the next session (`tif.next_valid_session`) and the test cancels it — the run then ends
-   `NOT OK — … outside regular hours …`, which proves placement → cancel → reconcile but is not a round trip. Run the
-   three tests on a trading day inside the session.
+   While the feed is delayed (or outside regular hours) add `--allow-delayed` to the first two: the order still goes to
+   the sandbox, but the quote behind it is stale and the row says so. Run them on a real-time feed once that exists.
+   **How the sandbox fills (tastytrade's own documentation — it is a price rule, not a market):** a limit order priced
+   **under $3 fills immediately**; a limit order at **$3 or more goes Live and never fills**; a market order fills at
+   **$1**. So the first two tests print how the option was chosen —
+   `production chain … / sandbox chain … / common live expirations … / price cap: ask ≤ 1.50 … / quotes … / over the cap … / chosen …`
+   — the sandbox trades a smaller, sometimes stale set of contracts than production, so the test takes the nearest
+   expiration both know, walks out of the money from the at-the-money strike to the first call whose ask is at or under
+   the cap ($1.50: under the sandbox's $3 line, and the dearest contract the engine's one-contract floor buys with a
+   $1,000 account), and dry-runs that exact order in the sandbox before placing it. If it ends with "no option the
+   sandbox trades could be found", read those lines — usually the sandbox chain is stale — and try `--symbol QQQ` or
+   `--symbol AAPL`.
+   **Run the three tests on a trading day inside the session (09:30–16:00 ET).** Outside it the sandbox answers an order
+   with `tif.next_valid_session` ("will begin working during next valid session") and may leave it unfilled; the test
+   then cancels it and ends `NOT OK — … may park orders …` — placement → cancel → reconcile, not a round trip.
+
+**What sandbox fills do and do not tell you:** a fill there proves the plumbing (order accepted, fill read, position
+closed, books reconciled) and nothing about price — it fills at your own limit whatever the market is doing, and a
+position marked at $3 or more cannot be sold at a limit at all (the exit ladder gives up, the flatten ladder's market
+order books $1). The paper panel's "realized" numbers inherit that. **Edge is judged on the shadow ledger** (entry at
+the real ask, marked at the real bid from DXLink) — that is what the posterior, the Kelly size and the M5 gate read.
 
 **Day to day:**
 

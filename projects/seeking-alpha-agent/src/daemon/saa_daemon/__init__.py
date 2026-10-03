@@ -15,4 +15,4 @@ switch (`/halt` or `state/HALT`) that flattens within 10 s. The order path is ga
 engine; production brokerage stays refused by config until M5.
 """
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"

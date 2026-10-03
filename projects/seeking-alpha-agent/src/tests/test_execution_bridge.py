@@ -238,6 +238,25 @@ def test_placed_order_status_mapping():
     assert conv(PlacedOrder(**_placed(6, "Cancel Requested"))).status == "live" and not conv(PlacedOrder(**_placed(6, "Cancel Requested"))).terminal
 
 
+def test_filled_order_without_fill_rows_still_accounts_for_the_quantity(caplog):
+    """A `Filled` order whose leg lists no fill rows (a simulated fill may not carry them) must not orphan the position:
+    the full quantity is booked as one *reported* fill at the order's own limit price (0.0 for a market order — the price
+    is unknown), and the bridge says so in the log. Real fill rows, when present, always win."""
+    from tastytrade.order import PlacedOrder
+    conv = TastytradeBroker._convert
+    with caplog.at_level("WARNING", logger="saa.tt_broker"):
+        o = conv(PlacedOrder(**_placed(7, "Filled", qty=1)))                      # limit buy 1.14, no fills listed
+    assert o.status == "filled" and o.filled_quantity == 1 and o.avg_fill_price == 1.14
+    assert [(f.fill_id, f.quantity, f.price) for f in o.fills] == [("7:reported", 1, 1.14)]
+    assert "Filled without fill rows" in caplog.text
+    m = conv(PlacedOrder(**_placed(8, "Filled", qty=2, price="0", action="Sell to Close", order_type="Market")))
+    assert m.status == "filled" and m.filled_quantity == 2 and m.fills[0].price == 0.0 and m.fills[0].fill_id == "8:reported"
+    # a live or cancelled order without fills is not touched, and listed fills are never replaced
+    assert conv(PlacedOrder(**_placed(9, "Live"))).filled_quantity == 0 and conv(PlacedOrder(**_placed(9, "Cancelled"))).fills == []
+    real = conv(PlacedOrder(**_placed(10, "Filled", fills=[(1, "1.12")])))
+    assert [f.fill_id for f in real.fills] == ["f0"] and real.avg_fill_price == 1.12
+
+
 # ------------------------------------------------------------------------------------------------------- telegram
 class TgHttp:
     def __init__(self) -> None:

@@ -24,6 +24,14 @@ class BrokerError(Exception):
     """Transport / API failure. The message never contains credentials."""
 
 
+# The tastytrade sandbox has no market behind it; its fill simulator is a price rule (developer.tastytrade.com/docs/sandbox,
+# read 2026-10-03): a limit order priced under $3 fills immediately, a limit order at $3 or above goes Live and never
+# fills, a market order always fills — at $1. Anything that must *fill* in the sandbox has to be priced under the first
+# number; a fill price there says nothing about the market.
+SANDBOX_LIMIT_FILLS_BELOW = 3.00
+SANDBOX_MARKET_FILL_PRICE = 1.00
+
+
 @dataclass
 class BrokerFill:
     fill_id: str
@@ -117,7 +125,10 @@ class FakeBroker:
     `quotes[occ] = (bid, ask)` is the market. Fill modes:
       * ``market`` (default) — a limit fills when it is marketable (buy limit ≥ ask fills at the ask; sell limit ≤ bid at
         the bid); resting orders are re-checked against the current quotes on every call, so a quote move can fill them.
-      * ``at_limit`` — every limit fills immediately at its limit price (what the tastytrade sandbox does).
+      * ``at_limit`` — every limit fills immediately at its limit price.
+      * ``sandbox`` — the tastytrade sandbox's documented fill rule: a limit under ``SANDBOX_LIMIT_FILLS_BELOW`` ($3) fills
+        immediately at its limit price, a limit at or above it rests and never fills, a market order fills at
+        ``SANDBOX_MARKET_FILL_PRICE`` ($1). No quotes are consulted — the sandbox has none.
       * ``never`` — limits never fill (market orders still do when ``market_fills``).
       * ``partial`` — half the quantity (rounded up) fills at the limit at once, the rest never.
       * ``reject`` — every placement is rejected with ``reject_reason``.
@@ -131,7 +142,7 @@ class FakeBroker:
     def __init__(self, *, mode: str = "market", reject_reason: str = "rejected by fake broker", market_fills: bool = True,
                  fail_next: list[str] | None = None, account_masked: str = "…0000", cash: float = 1000.0,
                  quote_fn: Any = None, untradable: set[str] | None = None):
-        assert mode in ("market", "at_limit", "never", "partial", "reject")
+        assert mode in ("market", "at_limit", "sandbox", "never", "partial", "reject")
         self.mode = mode
         self.reject_reason = reject_reason
         self.market_fills = market_fills
@@ -181,6 +192,13 @@ class FakeBroker:
             return
         remaining = o.quantity - o.filled_quantity
         if remaining <= 0:
+            return
+        if self.mode == "sandbox":
+            if o.order_type == "market":
+                if self.market_fills:
+                    self._fill(o, remaining, SANDBOX_MARKET_FILL_PRICE)
+            elif o.price is not None and o.price < SANDBOX_LIMIT_FILLS_BELOW - 1e-9:
+                self._fill(o, remaining, float(o.price))
             return
         q = self.quotes.get(o.symbol)
         if o.order_type == "market":
@@ -292,4 +310,5 @@ class FakeBroker:
         return {"cash": round(self.cash, 2), "net_liq": round(self.cash + sum(q * px * 100 for q, px in self._positions.values()), 2)}
 
 
-__all__ = ["Broker", "BrokerError", "BrokerFill", "BrokerOrder", "BrokerPosition", "FakeBroker"]
+__all__ = ["Broker", "BrokerError", "BrokerFill", "BrokerOrder", "BrokerPosition", "FakeBroker", "SANDBOX_LIMIT_FILLS_BELOW",
+           "SANDBOX_MARKET_FILL_PRICE"]

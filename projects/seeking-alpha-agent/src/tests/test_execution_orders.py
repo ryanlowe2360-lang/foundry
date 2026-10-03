@@ -124,7 +124,7 @@ async def test_fake_broker_fills_marketable_limits_and_tracks_positions():
 
 @pytest.mark.asyncio
 async def test_fake_broker_modes():
-    b = FakeBroker(mode="at_limit")                                   # the tastytrade sandbox fills at the limit price
+    b = FakeBroker(mode="at_limit")                                   # every limit fills at its limit price, whatever the quote
     b.quotes["X"] = (1.00, 1.10)
     o = await b.place("X", "buy_to_open", 1, 1.03)
     assert o.status == "filled" and o.avg_fill_price == 1.03
@@ -286,3 +286,59 @@ async def test_flatten_ladder_reaches_market_within_ten_seconds(tmp_path: Path):
     assert t.status == "filled" and t.avg_fill_price == 1.10 and (t.done_at - t.created_at).total_seconds() <= 10
     assert t.limit_prices[0] == 1.10 and t.limit_prices[1] < 1.10 and t.limit_prices[-1] is None       # None = market
     assert [c[0] for c in b.calls if c[0] in ("place", "replace")] == ["place", "replace", "replace"]
+
+
+# ------------------------------------------------------------------------------------ the tastytrade sandbox's fill rule
+SBX = "SPY   261009C00770000"
+
+
+@pytest.mark.asyncio
+async def test_fake_broker_sandbox_mode_follows_the_documented_fill_rule():
+    """developer.tastytrade.com/docs/sandbox: a limit order priced under $3 fills immediately, one at $3 or above goes
+    Live and never fills, a market order always fills — at $1. There is no market behind it (the sandbox serves no quotes)."""
+    from saa_daemon.execution.broker import SANDBOX_LIMIT_FILLS_BELOW, SANDBOX_MARKET_FILL_PRICE
+    assert SANDBOX_LIMIT_FILLS_BELOW == 3.00 and SANDBOX_MARKET_FILL_PRICE == 1.00
+    b = FakeBroker(mode="sandbox")                                    # no quotes set on purpose
+    o = await b.place(SBX, "buy_to_open", 1, 2.99)
+    assert o.status == "filled" and o.avg_fill_price == 2.99 and o.filled_quantity == 1
+    for px in (3.00, 4.76):
+        o = await b.place(SBX, "buy_to_open", 1, px)
+        assert o.status == "live" and (await b.get_order(o.order_id)).status == "live" and o.filled_quantity == 0
+        assert (await b.cancel(o.order_id)).status == "cancelled"
+    s = await b.place(SBX, "sell_to_close", 1, 3.40)                  # the same rule on the way out: a winner above $3 never sells at a limit
+    assert s.status == "live"
+    await b.cancel(s.order_id)
+    m = await b.place(SBX, "sell_to_close", 1, None)
+    assert m.status == "filled" and m.avg_fill_price == 1.00 and await b.positions() == []
+
+
+@pytest.mark.asyncio
+async def test_ladder_in_the_sandbox_only_fills_a_contract_priced_under_three_dollars(tmp_path: Path):
+    """Ryan's Saturday pick (.SPY261009C770 at 4.75 / 4.77) can never fill in the sandbox, on any day; a 1.20 / 1.22 strike fills on rung 0."""
+    clock = FakeClock(at(10, 0, 0))
+    b = FakeBroker(mode="sandbox")
+    b.now_fn = clock.now
+    m = _mgr(tmp_path, clock, b)
+    task = asyncio.create_task(m.work(Ticket.new("k-rich", ".SPY261009C770", "buy", 1, 4.75, 4.77, clock.now())))
+    await _drive(clock, task, at(10, 1, 0))
+    t = task.result()
+    assert t.status == "unfilled" and t.filled_quantity == 0 and t.limit_prices == [4.76, 4.77] and await b.live_orders() == []
+    t2 = await m.work(Ticket.new("k-cheap", ".SPY261009C777", "buy", 1, 1.20, 1.22, clock.now()))
+    assert t2.status == "filled" and t2.avg_fill_price == 1.21 and t2.limit_prices == [1.21] and t2.reason == "filled on rung 0 @ 1.21"
+
+
+@pytest.mark.asyncio
+async def test_flatten_in_the_sandbox_falls_through_to_the_dollar_market_fill_above_three_dollars(tmp_path: Path):
+    """The kill switch on a sandbox position marked at $3 or more: neither limit rung can fill, the market order at 6 s
+    does (at the sandbox's $1) — still flat inside the 10-second budget. Under $3 the first order fills."""
+    clock = FakeClock(at(10, 0, 0))
+    b = FakeBroker(mode="sandbox")
+    b.now_fn = clock.now
+    m = _mgr(tmp_path, clock, b)
+    task = asyncio.create_task(m.flatten(Ticket.new("k-rich", ".SPY261009C770", "sell", 1, 3.40, 3.44, clock.now(), kind="flatten")))
+    await _drive(clock, task, at(10, 0, 30))
+    t = task.result()
+    assert t.status == "filled" and t.avg_fill_price == 1.00 and t.limit_prices == [3.40, 3.23, None]
+    assert (t.done_at - t.created_at).total_seconds() <= 10
+    t2 = await m.flatten(Ticket.new("k-cheap", ".SPY261009C777", "sell", 1, 1.20, 1.22, clock.now(), kind="flatten"))
+    assert t2.status == "filled" and t2.avg_fill_price == 1.20 and t2.limit_prices == [1.20] and t2.done_at == t2.created_at

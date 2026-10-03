@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 import pytest
 
-from saa_daemon import config
+from saa_daemon import __version__, config
 from saa_daemon.clock import ET, FakeClock, Schedule, et_dt
 from saa_daemon.daemon import Daemon
 from saa_daemon.events import CandleEvt, Evt, GreeksEvt, ProfileEvt, QuoteEvt, SummaryEvt, TradeEvt
@@ -272,7 +272,7 @@ async def test_full_session_simulation(env_file: Path, tmp_path: Path, fixtures:
 
     # --- Telegram: heartbeat at 09:25 and the EOD report at 16:20, both through saa.outbox
     enq = [b for fn, b in http.calls if fn == "saa_enqueue"]
-    assert len(enq) == 2 and enq[0]["p_kind"] == "system" and enq[0]["p_text"].startswith("SAA daemon ▸ Mon 2026-09-28 · v0.4.2 · testmac")
+    assert len(enq) == 2 and enq[0]["p_kind"] == "system" and enq[0]["p_text"].startswith(f"SAA daemon ▸ Mon 2026-09-28 · v{__version__} · testmac")
     assert "sandbox ok (acct …1234, Margin, options Basic) | Data: prod DXLink ok" in enq[0]["p_text"]
     assert "Universe: SPY QQQ IWM + 2 names (NVDA TSLA)" in enq[0]["p_text"] and "Econ today: Dallas Fed 10:30" in enq[0]["p_text"]
     assert "VIX 14.9 · 1D 12.5 · 9D 12.8 · 3M 17.9 (contango)" in enq[0]["p_text"]

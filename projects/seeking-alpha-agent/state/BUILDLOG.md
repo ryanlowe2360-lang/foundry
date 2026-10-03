@@ -2,6 +2,73 @@
 
 Append-only. Newest entry on top. Every session that touches this project adds one.
 
+## 2026-10-03 — session 10 (M4 close-out walkthrough, Saturday evening: the sandbox's fill rule found before Monday → v0.4.3 on the Mac)
+
+- **Preflight, before asking Ryan for anything (all read-only):**
+  - Mac `agent/daemon/` v0.4.2 = Foundry `0c6b7eb`: 52 files, every sha256 equal on both sides.
+  - Supabase: last `daemon:smoke` row is v0.4.0 (run_log 214, Sat 10:27 ET); `paper:roundtrip` rows 216 / 217 `ok=false` (the
+    two Saturday attempts); `saa.paper_trades` 2 (error, unfilled), `paper_orders` 2, `approvals` 0, `reconciliations` 0; no
+    `halt` key in `saa.settings`. Vercel (connector): no `saa-dashboard` project yet.
+  - Dashboard, exactly as Vercel will build it: a clean copy, `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` + `next build` green
+    (Next 15.5.27, Node 22); `next start` on **today's real `saa_dashboard` document** (19 KB; the 10-02 fixture's ledger with
+    today's `paper` / `today` / `daemon` / `daily_records` parts read through the connector) → no key **401** with the
+    middleware's own text, wrong key **403**, right key **307** + `saa_dash` cookie (30 days, HttpOnly), cookie **200**
+    (84 KB, both Saturday `roundtrip|…` rows in the paper panel), `/api/health` open.
+- **Finding (D25):** tastytrade's sandbox documentation — a limit order **under $3 fills immediately**, a limit order at **$3
+  or more goes Live and never fills**, a market order fills at **$1**. v0.4.2 picks the nearest-ATM strike (4.75 / 4.77 on
+  Saturday) and the dry run accepts it, so Monday's `paper-roundtrip` and `halt-test` would both have ended `NOT OK` after a
+  full ladder at `[4.76, 4.77]`. Session 9c's "the sandbox fills only during the regular session" was an inference from the
+  `tif.next_valid_session` warning, not a documented rule.
+- **Did (tests first — 16 new tests red, then the code):**
+  - `execution/broker.py`: `SANDBOX_LIMIT_FILLS_BELOW = 3.00`, `SANDBOX_MARKET_FILL_PRICE = 1.00`; `FakeBroker(mode="sandbox")`
+    = the documented rule (no quotes consulted).
+  - `paper.py`: `selftest_price_cap()` = `min(2.99, TIER1.floor_premium_max / 100)` = 1.50 and `price_cap_reason()`;
+    `option_candidates(max_ask=…)` walks call strikes from the ATM strike outward (up to 60); `choose_entry(max_ask=…,
+    probe_many=…)` = quote → cap → sandbox lookup → sandbox dry run, with `price cap …`, `quotes: n of m …` and one
+    `over the cap (date): …` line per expiration (a long walk abbreviated) before the unchanged `chosen …` line;
+    `probe_option_quotes` (one DXLink connection for every candidate); `roundtrip(seq=…)` numbers the evidence key;
+    `approval_test` waits (≤ 10 s) for a tapped update to finish before cancelling the poller; hours / queued wording says
+    what was observed ("may park"), no more.
+  - `paper_cli.py`: `entry_quote` passes the cap, its reason and the batch probe; `run_roundtrip` passes `seq=i+1`.
+  - `execution/tastytrade_broker.py`: `_convert` books a `Filled` order without fill rows as one `<id>:reported` fill for the
+    leg quantity at the order's limit price (0.0 for a market order) and logs a warning.
+  - Docs: daemon README (self-tests row, FakeBroker modes, test list, 160 tests), SETUP §8 (how the sandbox fills, what a sandbox
+    fill does and does not tell you, run inside the session), `__version__ = "0.4.3"`; D25.
+- **Verified (evidence):**
+  - Red first: `pytest src/tests/test_paper_cli.py test_execution_orders.py test_execution_bridge.py` → **16 failed, 36
+    passed** on v0.4.2 code (no `sandbox` mode / no cap; the approval race reproduced: "the proposal message was never
+    edited with the decision"). After the change: `python3 -m pytest src/tests -q` → **160 passed** (was 143); pyflakes clean
+    on every touched file; `compileall` clean.
+  - Mutation check: with `max_ask` removed from the CLI call the two end-to-end CLI tests fail (they drive the virtual clock,
+    so a regression fails instead of hanging) and the offline rehearsal prints `entry unfilled: 0/1 @ None ladder [4.76,
+    4.77] … RESULT: NOT OK` — what Monday would have shown.
+  - Offline rehearsal of the Monday commands (real CLI code; the two tastytrade sessions, the DXLink probes and the lookup
+    replaced by fakes on the sandbox rule): `price cap: ask ≤ 1.50 — …` · `over the cap (2026-10-09): 770 @ 4.77 · 771 @
+    4.12 · 772 @ 3.52 · 773 @ 2.96 · 774 @ 2.45 · 775 @ 1.98 · 776 @ 1.57` · `chosen .SPY261009C777 = SPY   261009C00777000
+    · exp 2026-10-09 strike 777 · bid 1.20 / ask 1.22 · sandbox dry run accepted 1 @ 1.21` · three × (`entry filled: 1/1 @
+    1.21 ladder [1.21]`, `exit  filled: 1/1 @ 1.21`, `reconciled: True`) · `RESULT: ALL ROUND TRIPS FILLED AND RECONCILED`;
+    `HALT: flat=True in 0.5s (budget 10 s: ✓) · … position before [('SPY   261009C00777000', 1)] → after []` · `RESULT: FLAT
+    WITHIN 10 S`. Tests assert exactly Ryan's pass rules on that output; three same-second round trips keep three
+    `paper_trades` rows and six tickets.
+  - Kill switch on the sandbox rule: a position marked 3.40 / 3.44 flattens `[3.40, 3.23, market]` → filled at 1.00 inside 10 s;
+    under $3 the first order fills.
+  - Mac deploy over the bridge: 7 files (`README.md`, `saa_daemon/__init__.py`, `paper.py`, `paper_cli.py`,
+    `execution/broker.py`, `execution/tastytrade_broker.py`, `agent/SETUP.md`), each sha256 equal on both sides (`__init__
+    36a1814c94b79a8e`, `paper 51bed115f7a57978`, `paper_cli f046d39e1629a702`, `execution/broker 17654f659e8cb3ae`,
+    `tastytrade_broker acb2532a8233744d`, `README ad0168cdf5402d81`, `SETUP 2949d10dfc12edd8`); the digest of the whole
+    52-file listing is `f5ef340de95a8824…` on the Mac and in the Foundry; `__version__ = "0.4.3"`; all 44 modules parse. (The
+    bridge VM still cannot reach tastytrade / Telegram / Supabase or run the Mac's venv — Ryan's smoke is the import check.)
+    One catch on the way: re-committing a corrected README from the **same staged path** wrote the *previous* bytes (the
+    Mac kept `dc1e0bc5…` with a fresh mtime) — the checksum comparison caught it; restaged under a new path, then equal.
+- **State hygiene:** `open_questions` had been empty since `4859b89` (session 9b) although the log said the M4 evidence was
+  listed there — with no blocker or question the nightly unattended build could have picked this project (D7). Three
+  truthful questions restored: the M4 live runs, the market-data entitlement, and the dashboard's treatment of self-test rows.
+- **Lessons:** read the venue's own documentation before trusting a simulator — the sandbox is a price rule with no market
+  behind it, and a dry run validates an order without saying whether it fills. A test double labelled "what the sandbox
+  does" must be built from the documented behaviour, not from a guess. A flow test that waits on a virtual clock has to be
+  driven, or a regression hangs instead of failing. Over the Mac bridge, never reuse a staged path for changed bytes, and
+  never trust "written" without the checksum from the Mac side.
+
 ## 2026-10-03 — session 9c (Ryan's rerun on v0.4.1: the pick works; three more findings fixed, v0.4.2 on the Mac)
 
 - **Ryan's evidence (Saturday 11:32 ET, from the Mac, v0.4.1):** `./run.sh paper-roundtrip --n 1 --allow-delayed` →
